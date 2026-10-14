@@ -69,8 +69,11 @@ build/bin/transcribe-cli \
   samples/jfk.wav
 ```
 
-Pass `--itn` to enable inverse text normalization (digits,
-capitalization, punctuation) at the model level.
+Inverse text normalization (digits, capitalization, punctuation) is on
+by default for Fun-ASR-MLT-Nano, matching upstream; pass `--no-itn` there
+for lowercase, unpunctuated spoken-form text. Fun-ASR-Nano defaults it
+off, because with it on English can come back all caps; pass `--itn` to
+enable it.
 
 The repo doesn't ship the GGUFs — pull them from the corresponding
 `handy-computer/<variant>-gguf` repo on Hugging Face, or convert from
@@ -83,9 +86,10 @@ All Fun-ASR-Nano variants support:
 
 - **Transcription** of 16 kHz mono WAV input.
 - **Inverse text normalization** (digits / capitalization /
-  punctuation) via `--itn` on the CLI, or
-  `transcribe_funasr_nano_params { use_itn = true }` via the library
-  API.
+  punctuation), on by default for Fun-ASR-MLT-Nano and off for
+  Fun-ASR-Nano. Override with `--itn` / `--no-itn` on the CLI, or
+  `itn = TRANSCRIBE_ITN_MODE_ON` / `TRANSCRIBE_ITN_MODE_OFF` in
+  `transcribe_run_params` via the library API.
 
 What's not supported (consistent across the family): translation,
 real-time streaming, long-form chunking, timestamps, VAD, speaker

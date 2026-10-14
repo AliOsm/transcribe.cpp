@@ -36,9 +36,9 @@ summary: |
   ("hundreds of thousands of hours" per the model card, vs Nano's
   "tens of millions"). Takes a 16 kHz mono WAV and emits text. Not
   streaming, no translation, no timestamps. ITN (inverse text
-  normalization) is supported by the model and exposed via the
-  `--itn` CLI flag and `transcribe_funasr_nano_params { use_itn }`
-  in the library API.
+  normalization) is on by default, matching upstream, for readable
+  casing, punctuation, and digits; pass `--no-itn` for spoken-form
+  output.
 
 wer:
   notes: |
@@ -49,3 +49,6 @@ wer:
     BF16 port matches that baseline within -0.02 percentage-points. LibriSpeech is
     English only; the strength of the MLT variant is multilingual coverage, not English
     accuracy. For the other 30 languages, run your own representative manifest.
+    These table values were measured with ITN off, matching the FunASR reference;
+    `scripts/wer/run.py` pins `--no-itn` so the benchmark does not inherit the runtime
+    default.

@@ -15,9 +15,9 @@ bundled Qwen3-0.6B LLM); trained on a smaller multilingual corpus
 ("hundreds of thousands of hours" per the model card, vs Nano's
 "tens of millions"). Takes a 16 kHz mono WAV and emits text. Not
 streaming, no translation, no timestamps. ITN (inverse text
-normalization) is supported by the model and exposed via the
-`--itn` CLI flag and `transcribe_funasr_nano_params { use_itn }`
-in the library API.
+normalization) is on by default, matching upstream, for readable
+casing, punctuation, and digits; pass `--no-itn` for spoken-form
+output.
 <!-- /catalog -->
 
 ## What it's for
@@ -37,8 +37,12 @@ timestamps. The README explicitly lists timestamps, speaker
 diarization, and training as upstream TODOs.
 
 ITN (inverse text normalization — digits, capitalization, punctuation)
-is supported by the model. Pass `--itn` on the CLI, or set
-`transcribe_funasr_nano_params { use_itn = true }` via the library API.
+is **on by default**, matching upstream's `itn=True`. With ITN off the
+model emits lowercase, unpunctuated spoken-form text. Pass `--no-itn` on
+the CLI, or set `itn = TRANSCRIBE_ITN_MODE_OFF` in
+`transcribe_run_params`, for that form. The WER numbers below are
+measured with ITN **off**, matching the reference runs; see
+[WER methodology](../tools/wer.md).
 
 For Mandarin-only / dialect-heavy use, the regular
 [Fun-ASR-Nano](fun-asr-nano-2512.md) was trained on a much larger
@@ -78,6 +82,9 @@ reference run on the same manifest: 1.76% (95% CI [1.60%, 1.93%]). transcribe.cp
 BF16 port matches that baseline within -0.02 percentage-points. LibriSpeech is
 English only; the strength of the MLT variant is multilingual coverage, not English
 accuracy. For the other 30 languages, run your own representative manifest.
+These table values were measured with ITN off, matching the FunASR reference;
+`scripts/wer/run.py` pins `--no-itn` so the benchmark does not inherit the runtime
+default.
 <!-- /catalog -->
 
 <!-- catalog:accuracy -->
@@ -135,11 +142,18 @@ build/bin/transcribe-cli \
 ```
 
 Pass `--language ko` / `vi` / `th` / etc. for any of the 31 supported
-languages, or omit for auto-detection. Add `--itn` to render digits,
-capitalization, and punctuation in formal form:
+languages, or omit for auto-detection. ITN is on by default:
 
 ```bash
-build/bin/transcribe-cli --itn -m … samples/jfk.wav
+# Default (ITN on):
+#   And so my fellow Americans ask not what your country can do for you, ask
+#   what you can do for your country.
+build/bin/transcribe-cli -m … samples/jfk.wav
+
+# Spoken form — lowercase, unpunctuated, numbers as words:
+#   and so my fellow americans ask not what your country can do for you ask
+#   what you can do for your country
+build/bin/transcribe-cli --no-itn -m … samples/jfk.wav
 ```
 
 If your audio is not already 16 kHz mono WAV, convert it first:
