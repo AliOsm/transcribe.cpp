@@ -5,7 +5,8 @@ FunASR 1.3.1 for both shipped variants. C++ validation passes for
 `fun-asr-nano-2512` and `fun-asr-mlt-nano-2512`; the CLI/API expose
 ITN through the family prompt path. Stage 7 LibriSpeech test-clean WER
 passes against FunASR reference baselines: Nano BF16 1.78% vs reference
-1.79%, MLT BF16 1.74% vs reference 1.76%.
+1.79% (ITN off), MLT BF16 1.71% vs reference 1.71% (ITN on, its default;
+1.74% vs 1.76% with ITN off).
 
 ## Identity
 
@@ -244,8 +245,11 @@ One row per advertised capability. Allowed statuses:
   `reports/wer/fun-asr-nano-2512.test-clean.summary.md` and
   `reports/wer/fun-asr-mlt-nano-2512.test-clean.summary.md`.
 - **Ref-dtype hard gate: PASS.** Nano BF16 is 1.78% WER vs 1.79%
-  reference (-0.01 pp). MLT BF16 is 1.74% WER vs 1.76% reference
-  (-0.02 pp). Both are far inside the ±0.005 absolute Stage 7 gate.
+  reference (-0.01 pp), ITN off. MLT BF16 is 1.71% WER vs 1.71%
+  reference (-0.002 pp), ITN on, against
+  `reports/wer/fun-asr-mlt-nano-2512-REF-ITN.test-clean.jsonl`
+  (`run_reference_funasr_nano.py --use-itn`); with ITN off it was 1.74%
+  vs 1.76%. Both are far inside the ±0.005 absolute Stage 7 gate.
 - **ITN exposure closed.** The public CLI flags `--itn` / `--no-itn`
   and the generic `transcribe_run_params.itn` select the FunASR prompt
   path; ON omits `，不进行文本规整`.
