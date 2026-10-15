@@ -111,12 +111,12 @@ Compute latency (mel + encode + decode), speedup over realtime in parentheses; p
 
 | Backend | Sample           |            Q8_0 |          Q4_K_M |
 | ------- | ---------------- | --------------: | --------------: |
-| Vulkan  | ru-short (11.0s) | 797 ms (13.78×) | 800 ms (13.73×) |
-| Vulkan  | ru-long (33.8s)  | 2.08 s (16.26×) | 2.08 s (16.24×) |
-| CPU     | ru-short (11.0s) |  1.30 s (8.47×) |  1.40 s (7.87×) |
-| CPU     | ru-long (33.8s)  |  4.65 s (7.28×) |  4.85 s (6.98×) |
+| Vulkan  | ru-short (11.0s) | 793 ms (13.85×) | 798 ms (13.76×) |
+| Vulkan  | ru-long (33.8s)  | 2.17 s (15.61×) | 2.20 s (15.36×) |
+| CPU     | ru-short (11.0s) | 1.02 s (10.73×) | 982 ms (11.18×) |
+| CPU     | ru-long (33.8s)  | 3.19 s (10.62×) | 3.05 s (11.10×) |
 
-AMD Ryzen 7 PRO 4750U (Radeon RADV RENOIR): transcribe.cpp `522ccd68` on 2026-09-15.
+AMD Ryzen 7 PRO 4750U (Radeon RADV RENOIR): transcribe.cpp `0fff13f8` on 2026-10-15.
 <!-- /catalog -->
 
 Benchmark reproduction:
