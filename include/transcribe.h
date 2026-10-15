@@ -152,8 +152,8 @@
  * exactly and refuses to load a native provider that does not match.
  */
 #define TRANSCRIBE_VERSION_MAJOR 0
-#define TRANSCRIBE_VERSION_MINOR 3
-#define TRANSCRIBE_VERSION_PATCH 1
+#define TRANSCRIBE_VERSION_MINOR 4
+#define TRANSCRIBE_VERSION_PATCH 0
 
 #define TRANSCRIBE_VERSION_STRINGIZE_(x) #x
 #define TRANSCRIBE_VERSION_STRINGIZE(x)  TRANSCRIBE_VERSION_STRINGIZE_(x)
@@ -553,16 +553,17 @@ enum transcribe_pnc_mode {
  * transcribe_model_supports(model, TRANSCRIBE_FEATURE_ITN) returns false
  * emit a WARN and proceed with default behavior.
  *
- *   DEFAULT (0): family default. Zero-init gives this value. Most families
- *                follow their upstream default; `sensevoice` is the
- *                exception and resolves DEFAULT to ON, because there the
- *                ITN toggle is also the only source of casing and
- *                punctuation, so ITN-off would hand an unconfigured caller
- *                lowercase unpunctuated text. For sensevoice, DEFAULT is
- *                therefore NOT the setting the published WER tables were
- *                measured at — the harness pins ITN off (docs/tools/wer.md).
- *                `funasr_nano` has the same shape of toggle but keeps the
- *                upstream `itn=False` default.
+ *   DEFAULT (0): family default. Zero-init gives this value.
+ *                `sensevoice` and `fun-asr-mlt-nano-2512` resolve DEFAULT
+ *                to ON, because there the ITN toggle is also the only
+ *                source of casing and punctuation, so ITN-off would hand an
+ *                unconfigured caller lowercase unpunctuated text. For MLT
+ *                this is also upstream's default (`itn=True`); `sensevoice`
+ *                diverges from its upstream `itn=False`, and its published
+ *                WER is still measured with ITN off (docs/tools/wer.md).
+ *                `fun-asr-nano-2512` resolves DEFAULT to OFF: it emits
+ *                cased English without ITN, and with ITN on can emit
+ *                English in all caps.
  *   OFF:         explicit ITN off. Supporting families emit verbatim
  *                spoken-form text. Non-supporting families ignore (WARN).
  *   ON:          explicit ITN on. Supporting families apply ITN.
