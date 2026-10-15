@@ -13,7 +13,7 @@
   "published_repo": "handy-computer/gigaam-v3-e2e-ctc-gguf",
   "docs_page": "gigaam.md",
   "languages": ["ru"],
-  "long_form_strategy": "soft-window",
+  "long_form_strategy": "chunked-unbounded",
   "capabilities": {
     "transcribe": {"supported":true,"verified":false},
     "translate": {"supported":false},

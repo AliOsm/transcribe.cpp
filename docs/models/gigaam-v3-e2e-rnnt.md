@@ -3,18 +3,19 @@
 <!-- catalog:intro -->
 Upstream: [`ai-sage/GigaAM-v3`](https://huggingface.co/ai-sage/GigaAM-v3) at [`ec1dc1f`](https://huggingface.co/ai-sage/GigaAM-v3/commit/ec1dc1f).
 
-Offline Russian speech-to-text with greedy RNN-T decoding. 16-layer Conformer encoder paired with an RNN-T transducer head. Output is cased Russian with punctuation, decoded from a 1024-piece SentencePiece tokenizer. Not a streaming model and does not translate. Short-form only (≤25 s per utterance).
+Offline Russian speech-to-text with greedy RNN-T decoding. 16-layer Conformer encoder paired with an RNN-T transducer head. Output is cased Russian with punctuation, decoded from a 1024-piece SentencePiece tokenizer. Not a streaming model and does not translate. Audio past the 25 s training window is encoded in overlapping windows.
 <!-- /catalog -->
 
 ## What it's for
 
 Offline Russian speech-to-text with greedy RNN-T decoding. Output includes punctuation and Cyrillic casing inline from a 1024-piece SentencePiece tokenizer.
 
-Decoder is greedy; no language model, no beam search. Short-form only
-(≤ 25 s per utterance; upstream `transcribe_longform` chunking via
-PyAnnote VAD is intentionally not ported). Token-level timestamps are
-emitted at the encoder frame rate (40 ms granularity); word- and
-segment-level timestamps are out of scope.
+Decoder is greedy; no language model, no beam search. Audio longer than
+the 25 s training window is encoded in overlapping windows (see
+[Input limits](gigaam.md#input-limits)); upstream's PyAnnote-VAD
+`transcribe_longform` is not ported. Token-level timestamps are emitted
+at the encoder frame rate (40 ms granularity); word- and segment-level
+timestamps are out of scope.
 
 The encoder is shared across all four ported GigaAM-v3 variants but
 weights are per-variant fine-tuned (the encoder hidden state differs
