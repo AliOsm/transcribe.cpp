@@ -259,7 +259,8 @@ transcribe_status reset_compute_ctx(GigaamSession * gc) {
     return TRANSCRIBE_OK;
 }
 
-// Create the scheduler on first use, then allocate `graph` on it.
+// Create the scheduler on first use, then allocate `graph` on it and apply
+// the session thread count to the CPU backend.
 transcribe_status alloc_encoder_graph(GigaamSession * gc, GigaamModel * gm, ggml_cgraph * graph) {
     if (gc->sched == nullptr) {
         gc->sched = ggml_backend_sched_new(gm->plan.scheduler_list.data(), nullptr,
@@ -275,6 +276,7 @@ transcribe_status alloc_encoder_graph(GigaamSession * gc, GigaamModel * gm, ggml
         transcribe::log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "gigaam: encoder graph allocation failed — out of memory.");
         return TRANSCRIBE_ERR_OOM;
     }
+    transcribe::configure_sched_n_threads(gc->sched, gc->n_threads);
     return TRANSCRIBE_OK;
 }
 
@@ -713,10 +715,6 @@ transcribe_status run_batch_encode(GigaamSession *                         gc,
         }
         ggml_backend_tensor_set(eb.dumps.pos_emb, pos.data(), 0, pos.size() * sizeof(int32_t));
     }
-
-    // Set the per-backend thread count (mirrors single-shot through the
-    // scheduler; the encoder is the dominant cost on CPU).
-    transcribe::configure_sched_n_threads(gc->sched, gc->n_threads);
 
     const int64_t t_enc_start = ggml_time_us();
     if (ggml_backend_sched_graph_compute(gc->sched, eb.graph) != GGML_STATUS_SUCCESS) {
