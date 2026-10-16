@@ -495,7 +495,11 @@ EncoderBuild build_encoder_graph(ggml_context *                     ctx,
             win_chunk = hp.enc_att_context_right + 1;
             win_left  = (hp.enc_att_context_left / win_chunk) * win_chunk;
             win_keys  = win_left + win_chunk;
-        } else if (is_local_hp) {
+        } else if (is_local_hp && hp.enc_att_context_right <= hp.enc_att_context_left) {
+            // The K/V windows come from a symmetric left-padded im2col, which
+            // only yields every block's window when right <= left. Wider
+            // right contexts (reachable only via the validation override;
+            // no shipped checkpoint has one) stay on the dense local graph.
             const int span = hp.enc_att_context_left + hp.enc_att_context_right + 1;
             win_chunk      = 16;
             while (win_chunk * 8 < span && win_chunk < 256) {

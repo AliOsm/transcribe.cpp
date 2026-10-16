@@ -31,32 +31,6 @@ import time
 from pathlib import Path
 
 
-
-def switch_to_local_attention(model, left: int, right: int) -> None:
-    """model.change_attention_model("rel_pos_local_attn", [left, right]),
-    corrected for two NeMo issues that otherwise make the reference wrong:
-    the rebuilt self_attn modules ignore the checkpoint's use_bias (weights
-    load with strict=False, so a bias-free checkpoint gets randomly
-    initialised linear_q/k/v/out biases), and the new modules start in
-    training mode (dropout active) even after model.eval()."""
-    from nemo.collections.asr.parts.submodules.conformer_modules import ConformerLayer
-
-    names = ("linear_q", "linear_k", "linear_v", "linear_out")
-    had_bias = {
-        name: {n: getattr(m.self_attn, n).bias is not None for n in names}
-        for name, m in model.encoder.named_modules() if isinstance(m, ConformerLayer)
-    }
-    model.change_attention_model(self_attention_model="rel_pos_local_attn",
-                                 att_context_size=[left, right])
-    for name, m in model.encoder.named_modules():
-        if isinstance(m, ConformerLayer):
-            for n, had in had_bias[name].items():
-                lin = getattr(m.self_attn, n)
-                if not had and lin.bias is not None:
-                    lin.bias = None
-    model.eval()
-
-
 def main() -> int:
     p = argparse.ArgumentParser(
         description=__doc__,
@@ -118,6 +92,14 @@ def main() -> int:
                        "produce the matching reference. Unset = the "
                        "checkpoint's own attention."
                    ))
+    p.add_argument("--allow-errors", action="store_true",
+                   help=(
+                       "Exit 0 when some (not all) utterances fail. Failures "
+                       "are still recorded in the report's `error` field and "
+                       "surface on score.py's Errors line. For long-form sets "
+                       "where full attention is expected to OOM on the "
+                       "longest talks. Default: any failure exits 1."
+                   ))
     args = p.parse_args()
 
     att_context = None
@@ -156,6 +138,7 @@ def main() -> int:
         is_prompt_aware,
         resolve_prompt_id,
         apply_prompt,
+        switch_to_local_attention,
     )
     _patch_conformer_for_offline(force_regular_att_style=args.offline_only)
 
@@ -375,11 +358,11 @@ def main() -> int:
         f"({n_done / wall:.2f} utt/s), {n_errors} errors"
     )
     print(f"report: {args.out}")
-    # Per-utterance failures are recorded in the report (`error` field) and
-    # surface on score.py's Errors line; only an all-failed run is a runner
-    # failure. Long-form sets routinely lose one talk to full-attention OOM
-    # and the other hyps must still reach the scorer.
-    return 0 if n_errors < n_done else 1
+    if n_errors == 0:
+        return 0
+    # --allow-errors: partial failures (recorded per utterance above) still
+    # reach the scorer; an all-failed run is always a runner failure.
+    return 0 if args.allow_errors and n_errors < n_done else 1
 
 
 if __name__ == "__main__":
