@@ -31,6 +31,32 @@ import time
 from pathlib import Path
 
 
+
+def switch_to_local_attention(model, left: int, right: int) -> None:
+    """model.change_attention_model("rel_pos_local_attn", [left, right]),
+    corrected for two NeMo issues that otherwise make the reference wrong:
+    the rebuilt self_attn modules ignore the checkpoint's use_bias (weights
+    load with strict=False, so a bias-free checkpoint gets randomly
+    initialised linear_q/k/v/out biases), and the new modules start in
+    training mode (dropout active) even after model.eval()."""
+    from nemo.collections.asr.parts.submodules.conformer_modules import ConformerLayer
+
+    names = ("linear_q", "linear_k", "linear_v", "linear_out")
+    had_bias = {
+        name: {n: getattr(m.self_attn, n).bias is not None for n in names}
+        for name, m in model.encoder.named_modules() if isinstance(m, ConformerLayer)
+    }
+    model.change_attention_model(self_attention_model="rel_pos_local_attn",
+                                 att_context_size=[left, right])
+    for name, m in model.encoder.named_modules():
+        if isinstance(m, ConformerLayer):
+            for n, had in had_bias[name].items():
+                lin = getattr(m.self_attn, n)
+                if not had and lin.bias is not None:
+                    lin.bias = None
+    model.eval()
+
+
 def main() -> int:
     p = argparse.ArgumentParser(
         description=__doc__,
@@ -185,9 +211,11 @@ def main() -> int:
             print(f"error: --att-context applies to regular-style encoders; "
                   f"this checkpoint is {style!r}", file=sys.stderr)
             return 2
-        model.change_attention_model(self_attention_model="rel_pos_local_attn",
-                                     att_context_size=att_context)
-        print(f"attention: rel_pos_local_attn {att_context}")
+        if min(att_context) >= 0:
+            switch_to_local_attention(model, *att_context)
+            print(f"attention: rel_pos_local_attn {att_context}")
+        else:
+            print("attention: checkpoint default (full)")
     if args.device != "cpu":
         model = model.to(args.device)
     load_ms = (time.monotonic() - t0) * 1000
