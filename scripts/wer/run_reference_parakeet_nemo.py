@@ -89,8 +89,10 @@ def main() -> int:
                        "(model.change_attention_model('rel_pos_local_attn', "
                        "[L, R])). This is what transcribe.cpp runs by default "
                        "on full-attention Parakeet checkpoints, so pass it to "
-                       "produce the matching reference. Unset = the "
-                       "checkpoint's own attention."
+                       "produce the matching reference. '-1,-1' = full "
+                       "attention (switches a local-window checkpoint such "
+                       "as tdt_ctc-1.1b). Unset = the checkpoint's own "
+                       "attention."
                    ))
     p.add_argument("--allow-errors", action="store_true",
                    help=(
@@ -138,7 +140,7 @@ def main() -> int:
         is_prompt_aware,
         resolve_prompt_id,
         apply_prompt,
-        switch_to_local_attention,
+        switch_attention,
     )
     _patch_conformer_for_offline(force_regular_att_style=args.offline_only)
 
@@ -194,11 +196,11 @@ def main() -> int:
             print(f"error: --att-context applies to regular-style encoders; "
                   f"this checkpoint is {style!r}", file=sys.stderr)
             return 2
-        if min(att_context) >= 0:
-            switch_to_local_attention(model, *att_context)
-            print(f"attention: rel_pos_local_attn {att_context}")
-        else:
-            print("attention: checkpoint default (full)")
+        try:
+            print(switch_attention(model, *att_context))
+        except ValueError as e:
+            print(f"error: --att-context: {e}", file=sys.stderr)
+            return 2
     if args.device != "cpu":
         model = model.to(args.device)
     load_ms = (time.monotonic() - t0) * 1000

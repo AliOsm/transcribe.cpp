@@ -251,20 +251,34 @@ def load_model(args: argparse.Namespace):
         style = str(getattr(model.cfg.encoder, "att_context_style", "regular"))
         if style != "regular":
             raise SystemExit(f"--att-context applies to regular-style encoders; this one is {style!r}")
-        if left >= 0 and right >= 0:
-            switch_to_local_attention(model, left, right)
-            print(f"attention: rel_pos_local_attn [{left}, {right}]")
+        print(switch_attention(model, left, right))
     return model
 
 
 
-def switch_to_local_attention(model, left: int, right: int) -> None:
-    """model.change_attention_model("rel_pos_local_attn", [left, right]),
-    corrected for two NeMo issues that otherwise make the reference wrong:
+def switch_attention(model, left: int, right: int) -> str:
+    """Set a regular-style encoder's attention window, mirroring the C++
+    TRANSCRIBE_PARAKEET_ATT_CONTEXT override: [left, right] >= 0 selects
+    rel_pos_local_attn, (-1, -1) full attention (rel_pos). A checkpoint
+    already on full attention is left untouched for (-1, -1); one that ships
+    a local window (parakeet-tdt_ctc-1.1b, [128, 128]) is switched to full.
+    Returns a one-line description of the attention in effect.
+
+    Goes through model.change_attention_model, corrected for two NeMo
+    issues that otherwise make the reference wrong:
     the rebuilt self_attn modules ignore the checkpoint's use_bias (weights
     load with strict=False, so a bias-free checkpoint gets randomly
     initialised linear_q/k/v/out biases), and the new modules start in
     training mode (dropout active) even after model.eval()."""
+    if (left < 0) != (right < 0):
+        raise ValueError(f"att context ({left}, {right}): both >= 0 (local) or both -1 (full)")
+    if left >= 0:
+        target, size = "rel_pos_local_attn", [left, right]
+    else:
+        if model.encoder.self_attention_model != "rel_pos_local_attn":
+            return "attention: checkpoint default (full)"
+        target, size = "rel_pos", [-1, -1]
+
     from nemo.collections.asr.parts.submodules.conformer_modules import ConformerLayer
 
     names = ("linear_q", "linear_k", "linear_v", "linear_out")
@@ -272,8 +286,7 @@ def switch_to_local_attention(model, left: int, right: int) -> None:
         name: {n: getattr(m.self_attn, n).bias is not None for n in names}
         for name, m in model.encoder.named_modules() if isinstance(m, ConformerLayer)
     }
-    model.change_attention_model(self_attention_model="rel_pos_local_attn",
-                                 att_context_size=[left, right])
+    model.change_attention_model(self_attention_model=target, att_context_size=size)
     for name, m in model.encoder.named_modules():
         if isinstance(m, ConformerLayer):
             for n, had in had_bias[name].items():
@@ -281,6 +294,7 @@ def switch_to_local_attention(model, left: int, right: int) -> None:
                 if not had and lin.bias is not None:
                     lin.bias = None
     model.eval()
+    return f"attention: {target} {size}"
 
 
 def detect_arch(model) -> str:
@@ -1551,8 +1565,9 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
             "Switch a regular-style encoder to rel_pos_local_attn with this "
             "'L,R' window before dumping (model.change_attention_model), e.g. "
             "'256,256': the window transcribe.cpp runs by default on "
-            "full-attention Parakeet checkpoints. Unset = the checkpoint's own "
-            "attention."
+            "full-attention Parakeet checkpoints. '-1,-1' = full attention "
+            "(switches a local-window checkpoint such as tdt_ctc-1.1b). Unset = "
+            "the checkpoint's own attention."
         ),
     )
 
