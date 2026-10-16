@@ -340,8 +340,9 @@ bool detect_direct_pw(const char * backend) {
 // Conv module (pointwise -> GLU -> depthwise -> BN/LN -> SiLU -> pointwise).
 // Operates on the post-LayerNorm activation (LN applied by the caller).
 // Pointwise convs (k=1) are direct mul_mats in [d_model, T] layout by
-// default; TRANSCRIBE_CONV_NO_DIRECT_PW=1 forces the im2col path. BatchNorm
-// uses fused scale + bias; LayerNorm normalizes per-channel on the fly.
+// default; TRANSCRIBE_CONV_NO_DIRECT_PW=1 forces the im2col path for
+// single-utterance runs. BatchNorm uses fused scale + bias; LayerNorm
+// normalizes per-channel on the fly.
 ggml_tensor * conv_module(ggml_context * ctx, ggml_tensor * x, const BlockView & b, const BlockParams & params) {
     const int          conv_kernel = params.conv_kernel;
     const ConvPolicy & policy      = params.policy;
@@ -361,7 +362,14 @@ ggml_tensor * conv_module(ggml_context * ctx, ggml_tensor * x, const BlockView &
     // B == 1 for single-shot; the offline batched encoder passes B > 1.
     const int64_t B       = x->ne[2];
 
-    if (policy.direct_pw) {
+    // The im2col pointwise fallback is single-utterance only: its bias
+    // reshape and GLU views hardcode ne[2]/ne[3] == 1, so at B > 1 the
+    // conv_pad_mask no longer broadcasts and ggml aborts. Force the
+    // batch-aware direct path at B > 1 regardless of backend policy or
+    // TRANSCRIBE_CONV_NO_DIRECT_PW (correctness beats the perf override).
+    const bool direct_pw = policy.direct_pw || B > 1;
+
+    if (direct_pw) {
         // Pointwise conv 1 as direct mul_mat in [d_model, T, B] layout.
         // Kernel ne=[1, d_model, 2*d_model] → reshape to [d_model, 2*d_model].
         // Force F32 accumulation for F16 weights (see mul_mat_f32acc in
@@ -513,7 +521,7 @@ ggml_tensor * conv_module(ggml_context * ctx, ggml_tensor * x, const BlockView &
 
     x = ggml_silu(ctx, x);
 
-    if (policy.direct_pw) {
+    if (direct_pw) {
         // Transpose back: [T, d_model] -> [d_model, T].
         x = ggml_cont(ctx, ggml_permute(ctx, x, 1, 0, 2, 3));
 
