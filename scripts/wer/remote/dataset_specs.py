@@ -47,6 +47,12 @@ def parse_dataset_spec(spec: str) -> tuple[str, str]:
         if not val:
             raise ValueError("mtedx-longform: requires a language, e.g. mtedx-longform:de")
         return "mtedx-longform", val
+    if kind == "librispeech-chapters":
+        return "librispeech-chapters", val or "test-clean"
+    if kind == "mtedx-midform":
+        if not val:
+            raise ValueError("mtedx-midform: requires a language, e.g. mtedx-midform:fr")
+        return "mtedx-midform", val
     raise ValueError(f"unknown dataset kind: {spec!r}")
 
 
@@ -107,6 +113,28 @@ def dataset_spec_info(spec: str) -> DatasetSpecInfo:
             split="test",
             default_language=val,
             ingest_args=["mtedx-longform", "--lang", val],
+        )
+    if kind == "librispeech-chapters":
+        return DatasetSpecInfo(
+            requested=spec,
+            kind=kind,
+            value=val,
+            dataset_id=ds_id,
+            source="openslr/librispeech",
+            split=val,
+            default_language="en",
+            ingest_args=["librispeech-chapters", "--split", val],
+        )
+    if kind == "mtedx-midform":
+        return DatasetSpecInfo(
+            requested=spec,
+            kind=kind,
+            value=val,
+            dataset_id=ds_id,
+            source="openslr/100",
+            split="test",
+            default_language=val,
+            ingest_args=["mtedx-midform", "--lang", val],
         )
     raise ValueError(spec)
 

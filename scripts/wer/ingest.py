@@ -517,6 +517,173 @@ def ingest_mtedx_longform(repo: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+# -------- Mid-length clips (1-5 min) --------------------------------------
+#
+# Long-form sets are whole talks (10-25 min) and the standard sets are short
+# utterances (<35 s). These build the range between: consecutive utterances
+# or subtitle segments of one recording, grouped into clips whose target
+# length cycles through MIDFORM_TARGETS_S, so one manifest covers 1-5 min
+# evenly. References stay exact: a clip holds whole utterances / segments
+# only.
+
+MIDFORM_TARGETS_S = (60.0, 120.0, 180.0, 240.0, 300.0)
+MIDFORM_MIN_S = 45.0
+MIDFORM_MAX_S = 330.0
+
+
+def _group_midform(spans: list[tuple[float, float, str]],
+                   k0: int = 0) -> list[list[tuple[float, float, str]]]:
+    """Greedy grouping of time-ordered (start, end, text) spans into clips.
+    A clip closes once it reaches the current target (cycling through
+    MIDFORM_TARGETS_S) and never exceeds MIDFORM_MAX_S; clips shorter than
+    MIDFORM_MIN_S (a recording's tail) are dropped. k0 offsets the target
+    cycle so recordings do not all start with the shortest clip."""
+    clips: list[list[tuple[float, float, str]]] = []
+    cur: list[tuple[float, float, str]] = []
+    k = k0
+    for span in spans:
+        if cur and span[1] - cur[0][0] > MIDFORM_MAX_S:
+            if cur[-1][1] - cur[0][0] >= MIDFORM_MIN_S:
+                clips.append(cur)
+                k += 1
+            cur = []
+        cur.append(span)
+        if cur[-1][1] - cur[0][0] >= MIDFORM_TARGETS_S[k % len(MIDFORM_TARGETS_S)]:
+            clips.append(cur)
+            cur = []
+            k += 1
+    if cur and cur[-1][1] - cur[0][0] >= MIDFORM_MIN_S:
+        clips.append(cur)
+    return clips
+
+
+def ingest_librispeech_chapters(repo: Path, args: argparse.Namespace) -> int:
+    """LibriSpeech as 1-5 min read-speech clips: consecutive utterances of
+    one speaker (chapters in order; test-clean chapters average under 4 min),
+    joined with 0.3 s of silence."""
+    split = args.split
+    src_manifest = repo / f"samples/wer/librispeech-{split}.manifest.jsonl"
+    out_dir = repo / f"samples/wer/librispeech-chapters-{split}"
+    manifest = repo / f"samples/wer/librispeech-chapters-{split}.manifest.jsonl"
+    if manifest.exists() and not args.force:
+        print(f"OK already exists: {manifest}. Pass --force to regenerate.")
+        return 0
+    if not src_manifest.exists():
+        rc = ingest_librispeech(repo, args)
+        if rc != 0:
+            return rc
+
+    chapters: dict[str, list[dict]] = {}
+    for line in open(src_manifest):
+        e = json.loads(line)
+        spk, _chap, _ = e["id"].split("-")
+        chapters.setdefault(spk, []).append(e)
+
+    gap = np.zeros(int(0.3 * 16000), dtype=np.float32)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    entries: list[dict] = []
+    for rec_i, chap_id in enumerate(sorted(chapters)):
+        utts = sorted(chapters[chap_id], key=lambda e: tuple(int(x) for x in e["id"].split("-")))
+        spans, audio, t = [], {}, 0.0
+        for e in utts:
+            data, sr = sf.read(e["audio"], dtype="float32")
+            assert sr == 16000, e["audio"]
+            audio[e["id"]] = data
+            spans.append((t, t + len(data) / sr, e["id"]))
+            t += len(data) / sr + len(gap) / 16000
+        for i, clip in enumerate(_group_midform(spans, k0=rec_i)):
+            ids = [c[2] for c in clip]
+            utt_id = f"librispeech-chapters-{split}-{chap_id}-{i:02d}"
+            wav_path = out_dir / f"{utt_id}.wav"
+            if args.force or not wav_path.exists():
+                parts = []
+                for j, uid in enumerate(ids):
+                    if j:
+                        parts.append(gap)
+                    parts.append(audio[uid])
+                write_wav_16k_mono(np.concatenate(parts), 16000, wav_path)
+            ref = " ".join(next(u["ref_text"] for u in utts if u["id"] == uid) for uid in ids)
+            entries.append({
+                "id": utt_id,
+                "audio": str(wav_path),
+                "ref_text": ref,
+                "language": "en",
+                "duration_s": round(clip[-1][1] - clip[0][0], 2),
+            })
+
+    write_manifest(entries, manifest)
+    durs = [e["duration_s"] for e in entries]
+    print(f"manifest: {manifest}")
+    print(f"  {len(entries)} clips from {len(chapters)} speakers, "
+          f"{sum(durs) / 3600:.2f} h, {min(durs):.0f}-{max(durs):.0f} s")
+    return 0
+
+
+def ingest_mtedx_midform(repo: Path, args: argparse.Namespace) -> int:
+    """mTEDx test talks cut into 1-5 min clips on subtitle-segment
+    boundaries: audio from the first segment's start to the last segment's
+    end, reference = those segments' text."""
+    lang = args.lang.lower()
+    if lang not in MTEDX_LANGS:
+        print(f"error: mTEDx has no '{lang}' (available: {', '.join(MTEDX_LANGS)})",
+              file=sys.stderr)
+        return 2
+    talk_dir = repo / f"samples/wer/mtedx-longform-{lang}"
+    out_dir = repo / f"samples/wer/mtedx-midform-{lang}"
+    manifest = repo / f"samples/wer/mtedx-midform-{lang}.manifest.jsonl"
+    if manifest.exists() and not args.force:
+        print(f"OK already exists: {manifest}. Pass --force to regenerate.")
+        return 0
+    if not (repo / f"samples/wer/mtedx-longform-{lang}.manifest.jsonl").exists():
+        rc = ingest_mtedx_longform(repo, argparse.Namespace(lang=lang, force=False))
+        if rc != 0:
+            return rc
+
+    test_dir = _mtedx_fetch_test(lang, repo / "samples/wer/raw")
+    seg_lines = (test_dir / "txt" / "segments").read_text(encoding="utf-8").splitlines()
+    txt_lines = (test_dir / "txt" / f"test.{lang}").read_text(encoding="utf-8").splitlines()
+    if len(seg_lines) != len(txt_lines):
+        print("error: segments / text line count mismatch", file=sys.stderr)
+        return 2
+    talks: dict[str, list[tuple[float, float, str]]] = {}
+    for seg, text in zip(seg_lines, txt_lines):
+        _, talk_id, start, end = seg.split()
+        text = " ".join(text.split())
+        if text:
+            talks.setdefault(talk_id, []).append((float(start), float(end), text))
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    entries: list[dict] = []
+    for rec_i, talk_id in enumerate(sorted(talks)):
+        src = talk_dir / f"mtedx-longform-{lang}-{talk_id}.wav"
+        if not src.exists():
+            print(f"error: {src} missing (run mtedx-longform --lang {lang})", file=sys.stderr)
+            return 2
+        data, sr = sf.read(str(src), dtype="float32")
+        assert sr == 16000, src
+        segs = sorted(talks[talk_id])
+        for i, clip in enumerate(_group_midform(segs, k0=rec_i)):
+            utt_id = f"mtedx-midform-{lang}-{talk_id}-{i:02d}"
+            wav_path = out_dir / f"{utt_id}.wav"
+            a, b = int(clip[0][0] * sr), min(len(data), int(clip[-1][1] * sr))
+            if args.force or not wav_path.exists():
+                write_wav_16k_mono(data[a:b], sr, wav_path)
+            entries.append({
+                "id": utt_id,
+                "audio": str(wav_path),
+                "ref_text": " ".join(c[2] for c in clip),
+                "language": lang,
+                "duration_s": round((b - a) / sr, 2),
+            })
+
+    write_manifest(entries, manifest)
+    durs = [e["duration_s"] for e in entries]
+    print(f"manifest: {manifest}")
+    print(f"  {len(entries)} clips from {len(talks)} talks, "
+          f"{sum(durs) / 3600:.2f} h, {min(durs):.0f}-{max(durs):.0f} s")
+    return 0
+
+
 # -------- Dispatch --------------------------------------------------------
 
 SOURCES = {
@@ -525,6 +692,8 @@ SOURCES = {
     "eka-medical-asr": ingest_eka_medical_asr,
     "tedlium-longform": ingest_tedlium_longform,
     "mtedx-longform": ingest_mtedx_longform,
+    "librispeech-chapters": ingest_librispeech_chapters,
+    "mtedx-midform": ingest_mtedx_midform,
 }
 
 
@@ -536,7 +705,7 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = p.add_subparsers(dest="source", required=True,
-                           metavar="{librispeech,fleurs,eka-medical-asr,tedlium-longform,mtedx-longform}")
+                           metavar="{librispeech,fleurs,eka-medical-asr,tedlium-longform,mtedx-longform,librispeech-chapters,mtedx-midform}")
 
     p_ls = sub.add_parser("librispeech",
                           help="LibriSpeech split (English-only).")
@@ -578,6 +747,22 @@ def main() -> int:
     p_mx.add_argument("--lang", required=True,
                       help="one of " + ", ".join(MTEDX_LANGS))
     p_mx.add_argument("--force", action="store_true",
+                      help="Regenerate even if manifest already exists.")
+
+    p_lc = sub.add_parser("librispeech-chapters",
+                          help="LibriSpeech chapters grouped into 1-5 min "
+                               "clips of consecutive utterances.")
+    p_lc.add_argument("--split", default="test-clean",
+                      choices=list(LIBRISPEECH_URLS))
+    p_lc.add_argument("--force", action="store_true",
+                      help="Regenerate even if manifest already exists.")
+
+    p_mm = sub.add_parser("mtedx-midform",
+                          help="mTEDx test talks cut into 1-5 min clips on "
+                               "subtitle-segment boundaries.")
+    p_mm.add_argument("--lang", required=True,
+                      help="one of " + ", ".join(MTEDX_LANGS))
+    p_mm.add_argument("--force", action="store_true",
                       help="Regenerate even if manifest already exists.")
 
     args = p.parse_args()
