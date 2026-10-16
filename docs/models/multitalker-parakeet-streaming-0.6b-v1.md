@@ -3,7 +3,7 @@
 <!-- catalog:intro -->
 Upstream: [`nvidia/multitalker-parakeet-streaming-0.6b-v1`](https://huggingface.co/nvidia/multitalker-parakeet-streaming-0.6b-v1) at [`8749fc7`](https://huggingface.co/nvidia/multitalker-parakeet-streaming-0.6b-v1/commit/8749fc7).
 
-Offline and cache-aware streaming English speech-to-text with punctuation and capitalization. A cache-aware streaming FastConformer encoder with an RNN-T transducer decoder, fine-tuned from nvidia/nemotron-speech-streaming-en-0.6b. Plain GGUFs run the single_speaker_mode ASR path, while bundle GGUFs under `bundle/` embed nvidia/diar_streaming_sortformer_4spk-v2.1 and, with `--diarize`, transcribe up to four overlapping speakers into a speaker-tagged transcript. The encoder preserves the upstream att_context_size=[70, 13] (1.12s) cache-aware attention mask; all four latency lookahead settings are selectable.
+Offline and cache-aware streaming English speech-to-text with punctuation and capitalization. A cache-aware streaming FastConformer encoder with an RNN-T transducer decoder, fine-tuned from nvidia/nemotron-speech-streaming-en-0.6b. Every GGUF is a bundle that embeds nvidia/diar_streaming_sortformer_4spk-v2.1: without `--diarize` it runs the single_speaker_mode ASR path, and with `--diarize` it transcribes up to four overlapping speakers into a speaker-tagged transcript. The encoder preserves the upstream att_context_size=[70, 13] (1.12s) cache-aware attention mask; all four latency lookahead settings are selectable.
 <!-- /catalog -->
 
 ## What it's for
@@ -40,12 +40,12 @@ Licensed [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/ent
 <!-- catalog:downloads label="LibriSpeech test-clean, offline" -->
 | Quantization | Download |    Size | WER (LibriSpeech test-clean, offline) |
 | --- | --- | ---: | ---: |
-| F32          | [bundle/multitalker-parakeet-streaming-0.6b-v1-F32.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-F32.gguf) | 2.96 GB | 2.19% |
-| F16          | [bundle/multitalker-parakeet-streaming-0.6b-v1-F16.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-F16.gguf) | 1.48 GB | 2.19% |
-| Q8_0         | [bundle/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf) |  873 MB | 2.18% |
-| Q6_K         | [bundle/multitalker-parakeet-streaming-0.6b-v1-Q6_K.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q6_K.gguf) |  743 MB | 2.20% |
-| Q5_K_M       | [bundle/multitalker-parakeet-streaming-0.6b-v1-Q5_K_M.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q5_K_M.gguf) |  681 MB | 2.18% |
-| Q4_K_M       | [bundle/multitalker-parakeet-streaming-0.6b-v1-Q4_K_M.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q4_K_M.gguf) |  617 MB | 2.18% |
+| F32          | [multitalker-parakeet-streaming-0.6b-v1-F32.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-F32.gguf) | 2.96 GB | 2.19% |
+| F16          | [multitalker-parakeet-streaming-0.6b-v1-F16.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-F16.gguf) | 1.48 GB | 2.19% |
+| Q8_0         | [multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf) |  873 MB | 2.18% |
+| Q6_K         | [multitalker-parakeet-streaming-0.6b-v1-Q6_K.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-Q6_K.gguf) |  743 MB | 2.20% |
+| Q5_K_M       | [multitalker-parakeet-streaming-0.6b-v1-Q5_K_M.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-Q5_K_M.gguf) |  681 MB | 2.18% |
+| Q4_K_M       | [multitalker-parakeet-streaming-0.6b-v1-Q4_K_M.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-Q4_K_M.gguf) |  617 MB | 2.18% |
 <!-- /catalog -->
 
 <!-- catalog:recipe -->
@@ -60,22 +60,13 @@ are both 2.19%.
 
 ### Multitalker bundles (speaker-attributed ASR)
 
-Bundle GGUFs embed the streaming Sortformer diarizer alongside the ASR model. Run them with `--diarize` to get a speaker-tagged transcript with up to four speakers. The tier names the ASR half's dtype; the embedded diarizer is F32 for the F32 bundle, F16 for F16, and Q8_0 for all k-quant tiers.
-
-| Bundle | Download | Size |
-| --- | --- | ---: |
-| F32 | [bundle/multitalker-parakeet-streaming-0.6b-v1-F32.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-F32.gguf) | 2.96 GB |
-| F16 | [bundle/multitalker-parakeet-streaming-0.6b-v1-F16.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-F16.gguf) | 1.48 GB |
-| Q8_0 | [bundle/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf) | 873 MB |
-| Q6_K | [bundle/multitalker-parakeet-streaming-0.6b-v1-Q6_K.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q6_K.gguf) | 743 MB |
-| Q5_K_M | [bundle/multitalker-parakeet-streaming-0.6b-v1-Q5_K_M.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q5_K_M.gguf) | 681 MB |
-| Q4_K_M | [bundle/multitalker-parakeet-streaming-0.6b-v1-Q4_K_M.gguf](https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q4_K_M.gguf) | 617 MB |
+Every GGUF above is a bundle: it embeds the streaming Sortformer diarizer alongside the ASR model. Run it with `--diarize` to get a speaker-tagged transcript with up to four speakers. The tier names the ASR half's dtype; the embedded diarizer is F32 for the F32 bundle, F16 for F16, and Q8_0 for all k-quant tiers.
 
 cpWER on AMI-IHM test (16 meetings, F32 bundle) is 19.35% in the default kernel mode and 23.73% in masked mode. The matched NeMo reference scores 21.39% and 24.00%, respectively; see the transcribe.cpp model page for the exactness accounting.
 
 ```bash
 build/bin/transcribe-cli --diarize \
-  -m bundle/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf \
+  -m multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf \
   meeting.wav
 ```
 <!-- /catalog -->
@@ -137,14 +128,18 @@ uv run --project scripts/envs/parakeet scripts/validate_streaming.py \
 cmake -B build
 cmake --build build
 
-# Plain GGUF: single-speaker transcription.
+hf download handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf \
+  multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf \
+  --local-dir models/multitalker-parakeet-streaming-0.6b-v1-gguf
+
+# Single-speaker transcription.
 build/bin/transcribe-cli \
-  -m models/multitalker-parakeet-streaming-0.6b-v1/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf \
+  -m models/multitalker-parakeet-streaming-0.6b-v1-gguf/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf \
   samples/jfk.wav
 
-# Bundle GGUF: speaker-attributed transcription.
+# Speaker-attributed transcription.
 build/bin/transcribe-cli --diarize \
-  -m models/multitalker-parakeet-streaming-0.6b-v1/bundle/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf \
+  -m models/multitalker-parakeet-streaming-0.6b-v1-gguf/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf \
   meeting.wav
 ```
 
@@ -306,6 +301,29 @@ build/bin/transcribe-quantize \
   models/multitalker-parakeet-streaming-0.6b-v1/multitalker-parakeet-streaming-0.6b-v1-F32.gguf \
   models/multitalker-parakeet-streaming-0.6b-v1/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf \
   --quant Q8_0
+```
+
+### Compose bundles
+
+The published files are bundles; the converted and quantized GGUFs above are
+ASR-only inputs to this step. Compose one bundle per tier into `bundle/`
+(F32 and F16 pair with the same-dtype diarizer, the k-quants with Q8_0):
+
+```bash
+uv run --project scripts/envs/moonshine scripts/compose-multitalker-bundle.py \
+  models/multitalker-parakeet-streaming-0.6b-v1/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf \
+  models/diar_streaming_sortformer_4spk-v2.1/diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf \
+  -o models/multitalker-parakeet-streaming-0.6b-v1/bundle/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf
+```
+
+### Publish
+
+Upload the bundles to the repo root, not the model directory: the ASR-only
+GGUFs there share the bundles' filenames.
+
+```bash
+hf upload handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf \
+  models/multitalker-parakeet-streaming-0.6b-v1/bundle . --include "*.gguf"
 ```
 
 ### Validate

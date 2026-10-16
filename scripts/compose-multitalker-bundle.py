@@ -39,6 +39,11 @@ Usage (any env with gguf, e.g. the moonshine or sortformer env):
       models/multitalker-parakeet-streaming-0.6b-v1/multitalker-parakeet-streaming-0.6b-v1-F32.gguf \
       models/diar_streaming_sortformer_4spk-v2.1/diar_streaming_sortformer_4spk-v2.1-F32.gguf \
       -o models/multitalker-parakeet-streaming-0.6b-v1/bundle/multitalker-parakeet-streaming-0.6b-v1-F32.gguf
+
+bundle/ is local staging only: the bundles keep the ASR inputs' filenames, so
+they cannot sit next to them. The HF repo ships bundles only, at its root:
+    hf upload handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf \
+      models/multitalker-parakeet-streaming-0.6b-v1/bundle . --include "*.gguf"
 """
 
 from __future__ import annotations

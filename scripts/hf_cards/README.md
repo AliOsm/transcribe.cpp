@@ -23,6 +23,11 @@ uv run scripts/hf_cards/generate.py scripts/hf_cards/<variant>.yaml
 hf upload handy-computer/<variant>-gguf models/<variant> . --repo-type model
 ```
 
+`multitalker-parakeet-streaming-0.6b-v1` publishes only the diarizer bundles,
+from `models/<variant>/bundle/` to the repo root. Don't upload
+`models/<variant>` wholesale: the ASR-only GGUFs there share the bundles'
+filenames and would overwrite them. See `scripts/compose-multitalker-bundle.py`.
+
 The 12 Moonshine language fine-tunes (`moonshine-{tiny,base}-<lang>`) are
 under the Moonshine AI Community License, which requires a copy of the
 agreement and a `NOTICE` file with every redistributed copy: upload
