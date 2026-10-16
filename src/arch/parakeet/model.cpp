@@ -1287,11 +1287,11 @@ transcribe_status run_one_shot_inner(ParakeetSession *             pc,
         // full/dense ChunkedLimited; W_left for dense Regular local
         // attention; window_left + chunk - 1 for the bounded-window graph.
         const bool is_chunked = (pm->hparams.enc_att_context_style == ParakeetHParams::AttContextStyle::ChunkedLimited);
-        const bool is_local_pe =
-            (!is_chunked) && (pm->hparams.enc_att_context_left >= 0 && pm->hparams.enc_att_context_right >= 0);
-        const int zero_index = eb.window_chunk > 0 ? eb.window_left + eb.window_chunk - 1 :
-                               is_local_pe         ? pm->hparams.enc_att_context_left :
-                                                     (pos_len - 1) / 2;
+        const bool is_local_pe = !eb.full_attention_shortcut && (!is_chunked) &&
+                                 (pm->hparams.enc_att_context_left >= 0 && pm->hparams.enc_att_context_right >= 0);
+        const int  zero_index  = eb.window_chunk > 0 ? eb.window_left + eb.window_chunk - 1 :
+                                 is_local_pe         ? pm->hparams.enc_att_context_left :
+                                                       (pos_len - 1) / 2;
 
         pc->pos_buf.assign(static_cast<size_t>(pos_len) * d_model, 0.0f);
 
@@ -1916,11 +1916,11 @@ static transcribe_status run_batch_encode(ParakeetSession *                     
         const int  d_model    = pm->hparams.enc_d_model;
         const int  pos_len    = static_cast<int>(eb.pos_emb_in->ne[1]);
         const bool is_chunked = (pm->hparams.enc_att_context_style == ParakeetHParams::AttContextStyle::ChunkedLimited);
-        const bool is_local_pe =
-            (!is_chunked) && (pm->hparams.enc_att_context_left >= 0 && pm->hparams.enc_att_context_right >= 0);
-        const int zero_index = eb.window_chunk > 0 ? eb.window_left + eb.window_chunk - 1 :
-                               is_local_pe         ? pm->hparams.enc_att_context_left :
-                                                     (pos_len - 1) / 2;
+        const bool is_local_pe = !eb.full_attention_shortcut && (!is_chunked) &&
+                                 (pm->hparams.enc_att_context_left >= 0 && pm->hparams.enc_att_context_right >= 0);
+        const int  zero_index  = eb.window_chunk > 0 ? eb.window_left + eb.window_chunk - 1 :
+                                 is_local_pe         ? pm->hparams.enc_att_context_left :
+                                                       (pos_len - 1) / 2;
         pc->pos_buf.assign(static_cast<size_t>(pos_len) * d_model, 0.0f);
         pc->pos_div_term.resize(static_cast<size_t>(d_model / 2));
         const float ln_10000 = std::log(10000.0f);

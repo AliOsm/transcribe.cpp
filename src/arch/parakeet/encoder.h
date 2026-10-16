@@ -109,9 +109,13 @@ struct EncoderBuild {
     // [window_keys, window_chunk, 1, n_chunks] and pos_emb's zero-offset
     // row sits at window_left + window_chunk - 1. window_chunk == 0 means
     // the dense reference graph.
-    int window_chunk = 0;
-    int window_left  = 0;
-    int window_keys  = 0;
+    int  window_chunk            = 0;
+    int  window_left             = 0;
+    int  window_keys             = 0;
+    // Regular-local band that covers the whole sequence (T_enc - 1 <=
+    // min(left, right)): the graph is the full-attention one, so the driver
+    // fills a 2T-1 pos table centred at T-1 rather than the local layout.
+    bool full_attention_shortcut = false;
 
     // Buffered-streaming conv valid-frame mask, ne=[T_enc, 1, 1, 1] f32.
     // Null unless the buffered path has pre_encode overhang frames that

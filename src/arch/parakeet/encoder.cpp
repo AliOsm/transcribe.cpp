@@ -474,15 +474,22 @@ EncoderBuild build_encoder_graph(ggml_context *                     ctx,
         const bool is_chunked =
             (hp.enc_att_context_style == ParakeetHParams::AttContextStyle::ChunkedLimited) ||
             (hp.enc_att_context_style == ParakeetHParams::AttContextStyle::ChunkedLimitedWithRc && buf_mask != nullptr);
-        const bool is_local_hp = (!is_chunked) && (hp.enc_att_context_left >= 0 && hp.enc_att_context_right >= 0);
+        // A Regular-local band that already covers every (q, k) pair is full
+        // attention: run the full-attention graph (bit-identical to a -1/-1
+        // checkpoint) instead of a 2L+1-row pos table that is sliced back.
+        const bool band_covers_all = (!is_chunked) && hp.enc_att_context_left >= 0 && hp.enc_att_context_right >= 0 &&
+                                     T_enc - 1 <= std::min(hp.enc_att_context_left, hp.enc_att_context_right);
+        eb.full_attention_shortcut = band_covers_all;
+        const bool is_local_hp =
+            !band_covers_all && (!is_chunked) && (hp.enc_att_context_left >= 0 && hp.enc_att_context_right >= 0);
         // Bounded-window geometry (query block C, keys W starting at
         // n*C - left). ChunkedLimited: C = chunk, left = left_chunks*C.
         // Regular-local [L, R]: C is a power of two near (L+R+1)/4, which
         // bounds the masked-out work per block at ~25% while replicating
         // K/V about five times.
-        int        win_chunk   = 0;
-        int        win_left    = 0;
-        int        win_keys    = 0;
+        int win_chunk = 0;
+        int win_left  = 0;
+        int win_keys  = 0;
         if (hp.enc_att_context_style == ParakeetHParams::AttContextStyle::ChunkedLimited &&
             hp.enc_att_context_right >= 0 && hp.enc_att_context_left >= 0) {
             win_chunk = hp.enc_att_context_right + 1;
@@ -587,8 +594,8 @@ EncoderBuild build_encoder_graph(ggml_context *                     ctx,
         transcribe::flash::apply_env_overrides(enc_use_flash, dec_use_flash);
         bparams.use_flash          = enc_use_flash;
         bparams.policy             = policy;
-        bparams.att_context_left   = hp.enc_att_context_left;
-        bparams.att_context_right  = hp.enc_att_context_right;
+        bparams.att_context_left   = band_covers_all ? -1 : hp.enc_att_context_left;
+        bparams.att_context_right  = band_covers_all ? -1 : hp.enc_att_context_right;
         bparams.att_context_style  = is_chunked ? conf::BlockParams::AttContextStyle::ChunkedLimited :
                                                   conf::BlockParams::AttContextStyle::Regular;
         bparams.window_chunk       = win_chunk;
