@@ -18,6 +18,7 @@
 #include "longform.h"
 #include "parakeet.h"
 #include "transcribe-arch.h"
+#include "transcribe-backend.h"
 #include "transcribe-batch-util.h"
 #include "transcribe-debug.h"
 #include "transcribe-env.h"
@@ -1176,17 +1177,9 @@ transcribe_status run_one_shot_inner(ParakeetSession *             pc,
         }
     }
     ggml_backend_sched_reset(pc->sched);
-    if (!ggml_backend_sched_alloc_graph(pc->sched, eb.graph)) {
+    if (!TRANSCRIBE_ALLOC_SCHED_GRAPH_EXTENT(pc->sched, eb.graph, "parakeet", (long long) eb.out->ne[1])) {
         log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "parakeet run: ggml_backend_sched_alloc_graph failed");
         return TRANSCRIBE_ERR_OOM;
-    }
-    // Per-backend compute scratch for this graph; the only direct read on
-    // encoder memory vs audio length (process RSS misses GPU buffers).
-    for (int bi = 0; bi < ggml_backend_sched_get_n_backends(pc->sched); ++bi) {
-        ggml_backend_t be = ggml_backend_sched_get_backend(pc->sched, bi);
-        log_msg(TRANSCRIBE_LOG_LEVEL_DEBUG, "parakeet run: T_enc=%lld sched buffer %s = %.1f MB",
-                (long long) eb.out->ne[1], ggml_backend_name(be),
-                ggml_backend_sched_get_buffer_size(pc->sched, be) / 1e6);
     }
 
     // Upload the mel; the row-major [num_mels, n_frames] buffer is
@@ -1555,7 +1548,7 @@ transcribe_status run_vad_block(ParakeetSession *    pc,
         }
     }
     ggml_backend_sched_reset(pc->sched);
-    if (!ggml_backend_sched_alloc_graph(pc->sched, vb.graph)) {
+    if (!TRANSCRIBE_ALLOC_SCHED_GRAPH(pc->sched, vb.graph, "parakeet")) {
         return TRANSCRIBE_ERR_OOM;
     }
     ggml_backend_tensor_set(vb.mel_in, mel.data(), 0, mel.size() * sizeof(float));
@@ -1890,7 +1883,7 @@ static transcribe_status run_batch_encode(ParakeetSession *                     
         }
     }
     ggml_backend_sched_reset(pc->sched);
-    if (!ggml_backend_sched_alloc_graph(pc->sched, eb.graph)) {
+    if (!TRANSCRIBE_ALLOC_SCHED_GRAPH(pc->sched, eb.graph, "parakeet")) {
         return TRANSCRIBE_ERR_OOM;
     }
 
@@ -2346,7 +2339,7 @@ transcribe_status ensure_pos_proj_cache(ParakeetSession * pc, ParakeetModel * pm
 
     transcribe_status st = TRANSCRIBE_OK;
     ggml_backend_sched_reset(pc->sched);
-    if (!ggml_backend_sched_alloc_graph(pc->sched, graph)) {
+    if (!TRANSCRIBE_ALLOC_SCHED_GRAPH(pc->sched, graph, "parakeet")) {
         st = TRANSCRIBE_ERR_OOM;
     } else {
         ggml_backend_tensor_set(pos_in, pc->pos_buf.data(), 0, static_cast<size_t>(pos_len) * d_model * sizeof(float));
@@ -2608,7 +2601,7 @@ transcribe_status emit_streaming_chunk(ParakeetSession * pc,
             }
         }
         ggml_backend_sched_reset(pc->sched);
-        if (!ggml_backend_sched_alloc_graph(pc->sched, eb.graph)) {
+        if (!TRANSCRIBE_ALLOC_SCHED_GRAPH(pc->sched, eb.graph, "parakeet")) {
             log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "parakeet stream: alloc_graph failed");
             return TRANSCRIBE_ERR_OOM;
         }
@@ -3024,7 +3017,7 @@ transcribe_status emit_buffered_chunk(ParakeetSession * pc,
         }
     }
     ggml_backend_sched_reset(pc->sched);
-    if (!ggml_backend_sched_alloc_graph(pc->sched, eb.graph)) {
+    if (!TRANSCRIBE_ALLOC_SCHED_GRAPH(pc->sched, eb.graph, "parakeet")) {
         return TRANSCRIBE_ERR_OOM;
     }
     ggml_backend_tensor_set(eb.mel_in, pc->mel_buf.data(), 0, pc->mel_buf.size() * sizeof(float));
