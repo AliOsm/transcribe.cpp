@@ -1177,7 +1177,7 @@ transcribe_status run_one_shot_inner(ParakeetSession *             pc,
         }
     }
     ggml_backend_sched_reset(pc->sched);
-    if (!TRANSCRIBE_ALLOC_SCHED_GRAPH(pc->sched, eb.graph, "parakeet")) {
+    if (!TRANSCRIBE_ALLOC_SCHED_GRAPH_EXTENT(pc->sched, eb.graph, "parakeet", (long long) eb.out->ne[1])) {
         log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "parakeet run: ggml_backend_sched_alloc_graph failed");
         return TRANSCRIBE_ERR_OOM;
     }
