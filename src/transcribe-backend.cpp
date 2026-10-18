@@ -11,8 +11,10 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace transcribe {
@@ -139,29 +141,62 @@ constexpr size_t k_never_logged = static_cast<size_t>(-1);
 // their step graph on every decoded token (whisper/canary on CPU, or whenever
 // debug dumping is on) would otherwise emit one identical line per token. The
 // scheduler's buffer only ever grows within a run, so a line is emitted exactly
-// when some graph raises it. Thread-local: graph allocation runs on the calling
-// thread, and entries are dropped in safe_sched_free.
-thread_local std::unordered_map<ggml_backend_sched_t, std::vector<size_t>> t_scratch_high_water;
+// when some graph raises it.
+//
+// Process-global under a mutex, not thread-local: a session may be moved
+// between threads (include/transcribe.h), so the allocating thread and the
+// thread that frees the session need not match. A thread-local map would leave
+// stale entries on the allocating thread and could suppress the first line of a
+// later scheduler that reuses the address. The lock is noise next to the graph
+// allocation it follows.
+std::mutex                                                    t_scratch_mutex;
+std::unordered_map<ggml_backend_sched_t, std::vector<size_t>> t_scratch_high_water;
+
+// Drop a scheduler's marks. Called from teardown, which is noexcept: the lock
+// cannot realistically fail, but an escaping exception there would terminate.
+void forget_sched_scratch(ggml_backend_sched_t sched) noexcept {
+    try {
+        const std::lock_guard<std::mutex> lock(t_scratch_mutex);
+        t_scratch_high_water.erase(sched);
+    } catch (...) {
+        // Bookkeeping for a debug line only; never let it escape.
+    }
+}
 
 void log_sched_scratch(ggml_backend_sched_t sched, const char * tag, int line, long long extent) {
-    std::vector<size_t> & high_water = t_scratch_high_water[sched];
-    const int             n_backends = ggml_backend_sched_get_n_backends(sched);
-    if (static_cast<int>(high_water.size()) != n_backends) {
-        high_water.assign(static_cast<size_t>(n_backends), k_never_logged);
-    }
-    for (int i = 0; i < n_backends; ++i) {
-        ggml_backend_t backend = ggml_backend_sched_get_backend(sched, i);
-        const size_t   size    = ggml_backend_sched_get_buffer_size(sched, backend);
-        if (size == high_water[static_cast<size_t>(i)]) {
-            continue;
+    // Thread-local scratch for the entries that rose, so the per-token no-op
+    // case allocates nothing. (This thread_local carries no semantics; the
+    // marks themselves are global.)
+    static thread_local std::vector<std::pair<const char *, size_t>> risen;
+    risen.clear();
+
+    {
+        const std::lock_guard<std::mutex> lock(t_scratch_mutex);
+        std::vector<size_t> &             high_water = t_scratch_high_water[sched];
+        const int                         n_backends = ggml_backend_sched_get_n_backends(sched);
+        if (static_cast<int>(high_water.size()) != n_backends) {
+            high_water.assign(static_cast<size_t>(n_backends), k_never_logged);
         }
-        high_water[static_cast<size_t>(i)] = size;
+        for (int i = 0; i < n_backends; ++i) {
+            ggml_backend_t backend = ggml_backend_sched_get_backend(sched, i);
+            const size_t   size    = ggml_backend_sched_get_buffer_size(sched, backend);
+            if (size == high_water[static_cast<size_t>(i)]) {
+                continue;
+            }
+            high_water[static_cast<size_t>(i)] = size;
+            risen.emplace_back(ggml_backend_name(backend), size);
+        }
+    }
+
+    // Log outside the lock: the host callback may be invoked on this thread and
+    // is allowed to re-enter the library, which must not deadlock on our mutex.
+    for (const auto & [name, size] : risen) {
         if (extent >= 0) {
-            log_msg(TRANSCRIBE_LOG_LEVEL_DEBUG, "%s@%d: sched buffer %s -> %.1f MB (extent %lld)", tag, line,
-                    ggml_backend_name(backend), static_cast<double>(size) / 1e6, extent);
+            log_msg(TRANSCRIBE_LOG_LEVEL_DEBUG, "%s@%d: sched buffer %s -> %.1f MB (extent %lld)", tag, line, name,
+                    static_cast<double>(size) / 1e6, extent);
         } else {
-            log_msg(TRANSCRIBE_LOG_LEVEL_DEBUG, "%s@%d: sched buffer %s -> %.1f MB", tag, line,
-                    ggml_backend_name(backend), static_cast<double>(size) / 1e6);
+            log_msg(TRANSCRIBE_LOG_LEVEL_DEBUG, "%s@%d: sched buffer %s -> %.1f MB", tag, line, name,
+                    static_cast<double>(size) / 1e6);
         }
     }
 }
@@ -187,9 +222,8 @@ void safe_sched_free(ggml_backend_sched_t sched) noexcept {
         return;
     }
     contained_free("ggml_backend_sched_free", [&] { ggml_backend_sched_free(sched); });
-    // Drop this scheduler's scratch high-water marks (see log_sched_scratch),
-    // so a later scheduler that reuses the address starts fresh.
-    t_scratch_high_water.erase(sched);
+    // Drop this scheduler's scratch high-water marks (see log_sched_scratch).
+    forget_sched_scratch(sched);
 }
 
 void release_compute_scratch(ggml_backend_sched_t & sched, struct ggml_context *& compute_ctx) noexcept {
