@@ -103,4 +103,20 @@ void safe_sched_free(ggml_backend_sched_t sched) noexcept;
 // sched / compute_ctx free order in one place. NULLs are no-ops.
 void release_compute_scratch(ggml_backend_sched_t & sched, struct ggml_context *& compute_ctx) noexcept;
 
+// Log the scheduler's per-backend compute-buffer size for the graph that was
+// just allocated. This is the only direct read on graph memory versus audio
+// length: process RSS misses GPU buffers, and the scheduler's per-backend
+// buffer is exactly the graph's scratch. DEBUG level only.
+//
+// `tag` names the family and `line` the call site, so a multi-graph run (e.g.
+// encode -> prefill -> step) logs one distinguishable line per graph.
+void log_sched_scratch(ggml_backend_sched_t sched, const char * tag, int line);
+
+// ggml_backend_sched_alloc_graph() plus the scratch log on success. Returns
+// the same bool as the ggml call. Use the macro below so `line` is filled in.
+bool alloc_sched_graph(ggml_backend_sched_t sched, struct ggml_cgraph * graph, const char * tag, int line);
+
+#define TRANSCRIBE_ALLOC_SCHED_GRAPH(sched, graph, tag) \
+    (::transcribe::alloc_sched_graph((sched), (graph), (tag), __LINE__))
+
 }  // namespace transcribe

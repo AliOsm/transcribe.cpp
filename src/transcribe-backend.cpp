@@ -158,4 +158,27 @@ void release_compute_scratch(ggml_backend_sched_t & sched, struct ggml_context *
     }
 }
 
+void log_sched_scratch(ggml_backend_sched_t sched, const char * tag, int line) {
+    if (sched == nullptr) {
+        return;
+    }
+    const int n_backends = ggml_backend_sched_get_n_backends(sched);
+    for (int i = 0; i < n_backends; ++i) {
+        ggml_backend_t backend = ggml_backend_sched_get_backend(sched, i);
+        if (backend == nullptr) {
+            continue;
+        }
+        log_msg(TRANSCRIBE_LOG_LEVEL_DEBUG, "%s@%d: graph scratch %s = %.1f MB", tag, line, ggml_backend_name(backend),
+                static_cast<double>(ggml_backend_sched_get_buffer_size(sched, backend)) / 1e6);
+    }
+}
+
+bool alloc_sched_graph(ggml_backend_sched_t sched, struct ggml_cgraph * graph, const char * tag, int line) {
+    if (!ggml_backend_sched_alloc_graph(sched, graph)) {
+        return false;
+    }
+    log_sched_scratch(sched, tag, line);
+    return true;
+}
+
 }  // namespace transcribe
