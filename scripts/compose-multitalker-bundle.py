@@ -38,7 +38,7 @@ Usage (any env with gguf, e.g. the moonshine or sortformer env):
     uv run --project scripts/envs/moonshine scripts/compose-multitalker-bundle.py \
       models/multitalker-parakeet-streaming-0.6b-v1/multitalker-parakeet-streaming-0.6b-v1-F32.gguf \
       models/diar_streaming_sortformer_4spk-v2.1/diar_streaming_sortformer_4spk-v2.1-F32.gguf \
-      -o models/multitalker-parakeet-streaming-0.6b-v1/bundle/multitalker-parakeet-streaming-0.6b-v1-F32.gguf
+      -o models/multitalker-parakeet-streaming-0.6b-v1/multitalker-parakeet-streaming-0.6b-v1-F32.gguf
 """
 
 from __future__ import annotations
