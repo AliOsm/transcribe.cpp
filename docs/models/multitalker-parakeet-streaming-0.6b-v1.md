@@ -137,12 +137,12 @@ uv run --project scripts/envs/parakeet scripts/validate_streaming.py \
 cmake -B build
 cmake --build build
 
-# Plain GGUF: single-speaker transcription.
+# Single-speaker transcription (single_speaker_mode ASR path).
 build/bin/transcribe-cli \
   -m models/multitalker-parakeet-streaming-0.6b-v1/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf \
   samples/jfk.wav
 
-# Bundle GGUF: speaker-attributed transcription.
+# Speaker-attributed transcription (same file; uses the embedded diarizer).
 build/bin/transcribe-cli --diarize \
   -m models/multitalker-parakeet-streaming-0.6b-v1/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf \
   meeting.wav
