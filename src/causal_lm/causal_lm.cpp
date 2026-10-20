@@ -836,6 +836,69 @@ void PackedGateUpHandles::free() {
     }
 }
 
+namespace {
+
+// Whether a block's gate/up bytes are already in packed layout: gate_w's bytes
+// immediately followed by up_w's inside one backend buffer, so a
+// [hidden, 2*intermediate] tensor starting at gate_w->data is the fused tensor.
+//
+// That is the normal case. The converter writes `ffn.up.weight` straight after
+// `ffn.gate.weight` (verified for granite 4.0/4.1/plus, canary-qwen, qwen3-asr,
+// voxtral, voxtral-realtime, moss and funasr-nano, all quant types), and the
+// loader keeps tensors either in that same order (a copied buffer) or in place
+// (load_common's read-only mmap). Aliasing instead of copying means the packed
+// path costs no weight memory at all: under mmap the fused tensor is the very
+// pages the gate/up tensors already are.
+//
+// Deliberately conservative. Anything unexpected falls back to the copying
+// path, which is what every model got before this existed.
+bool gate_up_is_adjacent(const GateUpEntry & e, size_t fused_bytes) {
+    ggml_backend_buffer_t buffer = e.gate_w->buffer;
+    if (buffer == nullptr || buffer != e.up_w->buffer) {
+        return false;
+    }
+    if (e.gate_w->data == nullptr || e.up_w->data == nullptr) {
+        return false;
+    }
+    if (e.gate_w->view_src != nullptr || e.up_w->view_src != nullptr) {
+        return false;
+    }
+    if (!ggml_is_contiguous(e.gate_w) || !ggml_is_contiguous(e.up_w)) {
+        return false;
+    }
+    if (static_cast<const char *>(e.gate_w->data) + ggml_nbytes(e.gate_w) != e.up_w->data) {
+        return false;
+    }
+
+    // A device may keep several views of one buffer (Metal splits a mapping
+    // larger than max_buffer_size into overlapping views) and a tensor has to
+    // sit inside a single one. The generic API does not expose view bounds, so
+    // only alias a buffer that the device holds as one view.
+    ggml_backend_buffer_type_t buft            = ggml_backend_buffer_get_type(buffer);
+    const size_t               max_buffer_size = ggml_backend_buft_get_max_size(buft);
+    if (max_buffer_size != 0 && ggml_backend_buffer_get_size(buffer) > max_buffer_size) {
+        return false;
+    }
+
+    // Some devices pad or reshape a tensor's storage (see load_common's mmap
+    // gating); the fused tensor is only valid if it occupies exactly its bytes.
+    if (ggml_backend_buffer_get_alloc_size(buffer, *e.gate_up_w_out) != fused_bytes) {
+        return false;
+    }
+    return true;
+}
+
+void log_alias_summary(const char * error_tag, size_t n_aliased, size_t n_entries, size_t aliased_bytes) {
+    if (n_aliased == 0) {
+        log_msg(TRANSCRIBE_LOG_LEVEL_DEBUG, "%s: gate+up packed by copying (%zu blocks)", error_tag, n_entries);
+        return;
+    }
+    log_msg(TRANSCRIBE_LOG_LEVEL_DEBUG, "%s: gate+up aliased for %zu/%zu blocks (%.1f MiB not duplicated)", error_tag,
+            n_aliased, n_entries, static_cast<double>(aliased_bytes) / (1024.0 * 1024.0));
+}
+
+}  // namespace
+
 transcribe_status pack_gate_up(ggml_backend_t                   backend,
                                int                              hidden,
                                int                              intermediate,
@@ -881,6 +944,41 @@ transcribe_status pack_gate_up(ggml_backend_t                   backend,
         *e.gate_up_w_out = t;
     }
 
+    // Blocks whose weights are already laid out as gate||up point at those
+    // bytes instead of duplicating them. The rest are copied into a buffer of
+    // our own, as before.
+    const bool          alias_allowed = !env::flag("TRANSCRIBE_NO_GATE_UP_ALIAS");
+    std::vector<size_t> copied;
+    size_t              n_aliased     = 0;
+    size_t              aliased_bytes = 0;
+    copied.reserve(entries.size());
+
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const GateUpEntry & e          = entries[i];
+        ggml_tensor *       gate_up    = *e.gate_up_w_out;
+        const size_t        fused_size = ggml_nbytes(gate_up);
+        if (!alias_allowed || !gate_up_is_adjacent(e, fused_size)) {
+            copied.push_back(i);
+            continue;
+        }
+        // Same shape, dtype and byte layout as the copied tensor; only the
+        // storage differs. gate_w->data is inside gate_w->buffer, which ggml's
+        // own bounds assert in ggml_backend_tensor_alloc checks.
+        if (ggml_backend_tensor_alloc(e.gate_w->buffer, gate_up, e.gate_w->data) != GGML_STATUS_SUCCESS) {
+            log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "%s: pack_gate_up could not alias gate/up at block %zu", error_tag, i);
+            return TRANSCRIBE_ERR_BACKEND;
+        }
+        ++n_aliased;
+        aliased_bytes += fused_size;
+    }
+
+    if (copied.empty()) {
+        log_alias_summary(error_tag, n_aliased, entries.size(), aliased_bytes);
+        return TRANSCRIBE_OK;
+    }
+
+    // alloc_ctx_tensors skips tensors that already have storage (the aliased
+    // ones) and returns NULL when none are left, hence the early return above.
     out_handles.buffer = ggml_backend_alloc_ctx_tensors(out_handles.ctx, backend);
     if (out_handles.buffer == nullptr) {
         log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "%s: pack_gate_up backend buffer alloc failed", error_tag);
@@ -891,10 +989,11 @@ transcribe_status pack_gate_up(ggml_backend_t                   backend,
     // Fill: concat-along-dim-1 is gate's bytes followed by up's bytes
     // (one CPU round-trip per block at load time).
     std::vector<uint8_t> buf;
-    for (const auto & e : entries) {
-        ggml_tensor * gate_up    = *e.gate_up_w_out;
-        const size_t  gate_bytes = ggml_nbytes(e.gate_w);
-        const size_t  up_bytes   = ggml_nbytes(e.up_w);
+    for (const size_t i : copied) {
+        const GateUpEntry & e          = entries[i];
+        ggml_tensor *       gate_up    = *e.gate_up_w_out;
+        const size_t        gate_bytes = ggml_nbytes(e.gate_w);
+        const size_t        up_bytes   = ggml_nbytes(e.up_w);
         if (ggml_nbytes(gate_up) != gate_bytes + up_bytes) {
             log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "%s: pack_gate_up size mismatch (%zu vs %zu + %zu)", error_tag,
                     ggml_nbytes(gate_up), gate_bytes, up_bytes);
@@ -906,6 +1005,8 @@ transcribe_status pack_gate_up(ggml_backend_t                   backend,
         ggml_backend_tensor_get(e.up_w, buf.data(), 0, up_bytes);
         ggml_backend_tensor_set(gate_up, buf.data(), gate_bytes, up_bytes);
     }
+
+    log_alias_summary(error_tag, n_aliased, entries.size(), aliased_bytes);
     return TRANSCRIBE_OK;
 }
 
