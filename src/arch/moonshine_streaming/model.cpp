@@ -45,6 +45,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -526,6 +527,126 @@ transcribe_status encode_window_to_host(MoonshineStreamingSession * cc,
     out_T_enc = T_enc;
 
     cc->t_encode_us += ggml_time_us() - t_start;
+    return TRANSCRIBE_OK;
+}
+
+// Encoder frames a windowed encode emits per window (see encode_pcm_to_host).
+// 1024 frames is ~20 s of audio at 50 frames/s. With medium's 210 + 4 frames
+// of left context and 12 of right, a window is ~1250 frames: the per-layer
+// masks and attention scores are ~6 MB each instead of growing with T^2, and
+// the context overhead is ~20%.
+constexpr int k_encode_window_emit_frames = 1024;
+
+// TRANSCRIBE_MOONSHINE_STREAMING_ENC_WINDOW=<frames> overrides the emit size,
+// so the windowed path can be exercised (and checked against the single-pass
+// encoder) on short clips. Values below 1 are ignored.
+int encode_window_emit_frames() {
+    if (const char * v = transcribe::env::str("TRANSCRIBE_MOONSHINE_STREAMING_ENC_WINDOW"); v != nullptr) {
+        char *     end = nullptr;
+        const long n   = std::strtol(v, &end, 10);
+        if (end != v && n >= 1 && n <= (1 << 20)) {
+            return static_cast<int>(n);
+        }
+    }
+    return k_encode_window_emit_frames;
+}
+
+// Encode a whole utterance in bounded windows and stitch the result.
+//
+// The one-shot encoder used to run the whole utterance as one graph, which
+// materialises one dense [T_enc, T_enc] mask per layer (host and device) plus
+// [T_enc, T_enc, n_heads] attention scores: T^2 growth, 12-26 GB of footprint
+// for 5 minutes of audio, and an abort at 10.
+//
+// Windowing is exact for this architecture, not an approximation. Every
+// encoder layer attends through a finite sliding window (L_i, R_i) and the
+// frontend convs are causal with a bounded receptive field, so the encoder
+// output at frame t depends only on conv-stack frames
+// [t - L_total, t + R_total] (cumulative_*_context), which in turn depend only
+// on PCM from k_frontend_pad_enc_frames further left. A window that carries
+// that much context on each side reproduces the single-pass output for its
+// emitted frames; the streaming path (flush_stable_frames) relies on the same
+// algebra and is parity-tested against one-shot. Window cuts land on
+// encoder-frame boundaries (samples_per_encoder_frame PCM samples), which keeps
+// both strided convs phase-aligned with the single pass.
+//
+// "Reproduces" is mathematical, not bitwise: backend kernels (Metal flash
+// attention, softmax, matmul tiling) group their reductions by a frame's
+// position within the graph, so a window that does not start at frame 0 sums
+// in a different order. Measured on tiny: <= ~5e-4 of the activation range,
+// uniform across the window with no rise near the cuts (a missing-context bug
+// shows up as a spike at each cut), and about half of what toggling flash
+// attention already does to the single pass.
+//
+// Short inputs (one window's worth) take the single-pass path unchanged.
+// `pcm` must already be right-padded to a multiple of frame_len.
+transcribe_status encode_pcm_to_host(MoonshineStreamingSession * cc,
+                                     MoonshineStreamingModel *   cm,
+                                     const float *               pcm,
+                                     int                         n_samples,
+                                     bool                        emit_dumps,
+                                     std::vector<float> &        out_enc_host,
+                                     int &                       out_T_enc) {
+    const auto & hp      = cm->hparams;
+    const int    T_total = encoder_t_enc(hp, n_samples);
+    const int    emit    = encode_window_emit_frames();
+    const int    L       = cumulative_left_context(hp) + k_frontend_pad_enc_frames;
+    const int    R       = cumulative_right_context(hp);
+    const int    spf     = samples_per_encoder_frame(hp);
+
+    if (T_total <= 0 || T_total <= emit + L + R || spf <= 0) {
+        return encode_window_to_host(cc, cm, pcm, n_samples, emit_dumps, out_enc_host, out_T_enc);
+    }
+
+    const int    enc_h = hp.enc_d_model;
+    const size_t total = static_cast<size_t>(enc_h) * static_cast<size_t>(T_total);
+    out_enc_host.assign(total, 0.0f);
+
+    // Dump points describe a single encoder graph; a windowed encode has one
+    // per window, so it emits none rather than a misleading last window.
+    if (emit_dumps) {
+        log_msg(TRANSCRIBE_LOG_LEVEL_DEBUG,
+                "moonshine_streaming: windowed encode (%d frames in windows of %d), encoder dumps skipped", T_total,
+                emit);
+    }
+
+    std::vector<float> win_host;
+    for (int emit_start = 0; emit_start < T_total; emit_start += emit) {
+        if (cc->poll_abort()) {
+            return TRANSCRIBE_ERR_ABORTED;
+        }
+        const int emit_end  = std::min(T_total, emit_start + emit);
+        const int win_start = std::max(0, emit_start - L);
+        const int win_end   = std::min(T_total, emit_end + R);
+
+        // The last window ends at the padded end of the input, exactly as the
+        // single pass does; every other one ends on a frame boundary.
+        const int64_t pcm_start = static_cast<int64_t>(win_start) * spf;
+        const int64_t pcm_end   = (win_end == T_total) ? n_samples : static_cast<int64_t>(win_end) * spf;
+        if (pcm_end <= pcm_start || pcm_end > n_samples) {
+            return TRANSCRIBE_ERR_INVALID_ARG;
+        }
+
+        int win_T = 0;
+        if (auto st = encode_window_to_host(cc, cm, pcm + pcm_start, static_cast<int>(pcm_end - pcm_start),
+                                            /*emit_dumps=*/false, win_host, win_T);
+            st != TRANSCRIBE_OK) {
+            return st;
+        }
+        if (win_T != win_end - win_start) {
+            log_msg(TRANSCRIBE_LOG_LEVEL_ERROR,
+                    "moonshine_streaming: encoder window [%d, %d) produced %d frames, expected %d", win_start, win_end,
+                    win_T, win_end - win_start);
+            return TRANSCRIBE_ERR_GGUF;
+        }
+
+        const size_t src_off = static_cast<size_t>(enc_h) * static_cast<size_t>(emit_start - win_start);
+        const size_t dst_off = static_cast<size_t>(enc_h) * static_cast<size_t>(emit_start);
+        const size_t n_float = static_cast<size_t>(enc_h) * static_cast<size_t>(emit_end - emit_start);
+        std::memcpy(out_enc_host.data() + dst_off, win_host.data() + src_off, n_float * sizeof(float));
+    }
+
+    out_T_enc = T_total;
     return TRANSCRIBE_OK;
 }
 
@@ -1168,8 +1289,8 @@ transcribe_status run_one_shot_inner(MoonshineStreamingSession *   cc,
 
     std::vector<float> enc_host;
     int                T_enc = 0;
-    if (auto st = encode_window_to_host(cc, cm, pcm_padded.data(), n_samples_padded,
-                                        /*emit_dumps=*/true, enc_host, T_enc);
+    if (auto st = encode_pcm_to_host(cc, cm, pcm_padded.data(), n_samples_padded,
+                                     /*emit_dumps=*/true, enc_host, T_enc);
         st != TRANSCRIBE_OK) {
         return st;
     }
@@ -1866,8 +1987,8 @@ transcribe_status run_batch(transcribe_session *          session,
         std::vector<float> pcm_padded = right_pad_pcm(pcm[b], n_samples[b], hp.enc_frame_len);
         std::vector<float> enc_host;
         int                t_enc_b = 0;
-        if (encode_window_to_host(cc, cm, pcm_padded.data(), static_cast<int>(pcm_padded.size()),
-                                  /*emit_dumps=*/false, enc_host, t_enc_b) != TRANSCRIBE_OK ||
+        if (encode_pcm_to_host(cc, cm, pcm_padded.data(), static_cast<int>(pcm_padded.size()),
+                               /*emit_dumps=*/false, enc_host, t_enc_b) != TRANSCRIBE_OK ||
             t_enc_b <= 0) {
             continue;
         }
