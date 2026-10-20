@@ -866,11 +866,6 @@ bool gate_up_is_adjacent(const GateUpEntry & e, size_t fused_bytes) {
     if (!ggml_is_contiguous(e.gate_w) || !ggml_is_contiguous(e.up_w)) {
         return false;
     }
-    // The fused tensor is exactly gate's bytes then up's, so the two have to add
-    // up to it: proves both shapes match what the fused shape implies.
-    if (fused_bytes != ggml_nbytes(e.gate_w) + ggml_nbytes(e.up_w)) {
-        return false;
-    }
     if (static_cast<const char *>(e.gate_w->data) + ggml_nbytes(e.gate_w) != e.up_w->data) {
         return false;
     }
@@ -950,6 +945,17 @@ transcribe_status pack_gate_up(ggml_backend_t                   backend,
             log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "%s: pack_gate_up new_tensor_2d failed at %zu", error_tag, i);
             return TRANSCRIBE_ERR_OOM;
         }
+        // The fused tensor is the byte-concat of the two, so their bytes must add
+        // up to it. The family's check_shapes() makes that true; enforcing it
+        // here, before the alias/copy split, is what lets the aliased path trust
+        // the fused tensor to cover exactly those two and nothing else.
+        const size_t gate_bytes = ggml_nbytes(e.gate_w);
+        const size_t up_bytes   = ggml_nbytes(e.up_w);
+        if (ggml_nbytes(t) != gate_bytes + up_bytes) {
+            log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "%s: pack_gate_up entry %zu size mismatch (%zu vs %zu + %zu)",
+                    error_tag, i, ggml_nbytes(t), gate_bytes, up_bytes);
+            return TRANSCRIBE_ERR_GGUF;
+        }
         *e.gate_up_w_out = t;
     }
 
@@ -1003,11 +1009,6 @@ transcribe_status pack_gate_up(ggml_backend_t                   backend,
         ggml_tensor *       gate_up    = *e.gate_up_w_out;
         const size_t        gate_bytes = ggml_nbytes(e.gate_w);
         const size_t        up_bytes   = ggml_nbytes(e.up_w);
-        if (ggml_nbytes(gate_up) != gate_bytes + up_bytes) {
-            log_msg(TRANSCRIBE_LOG_LEVEL_ERROR, "%s: pack_gate_up size mismatch (%zu vs %zu + %zu)", error_tag,
-                    ggml_nbytes(gate_up), gate_bytes, up_bytes);
-            return TRANSCRIBE_ERR_GGUF;
-        }
         buf.resize(std::max(gate_bytes, up_bytes));
         ggml_backend_tensor_get(e.gate_w, buf.data(), 0, gate_bytes);
         ggml_backend_tensor_set(gate_up, buf.data(), 0, gate_bytes);

@@ -104,12 +104,26 @@ const transcribe::qwen3_asr::QwenAsrModel * qwen_view(const struct transcribe_mo
     return static_cast<const transcribe::qwen3_asr::QwenAsrModel *>(m);
 }
 
+// setenv/unsetenv do not exist on MSVC; same helper shape as weights_mmap_smoke.
+// A null value unsets.
+void set_env(const char * name, const char * value) {
+#if defined(_WIN32)
+    _putenv_s(name, value != nullptr ? value : "");
+#else
+    if (value != nullptr) {
+        setenv(name, value, 1);
+    } else {
+        unsetenv(name);
+    }
+#endif
+}
+
 }  // namespace
 
 int main() {
     // The gate+up assertions below describe the default configuration; a caller
     // that exported the fork switch would otherwise fail them spuriously.
-    unsetenv("TRANSCRIBE_NO_GATE_UP_ALIAS");
+    set_env("TRANSCRIBE_NO_GATE_UP_ALIAS", nullptr);
 
     const std::string fixture = g_fixtures_dir + "/arch_qwen3_asr_minimal.gguf";
 
@@ -400,13 +414,13 @@ int main() {
     // ----- TRANSCRIBE_NO_GATE_UP_ALIAS forces the copying path -----
     // Same fused bytes either way: the switch must not change results.
     {
-        setenv("TRANSCRIBE_NO_GATE_UP_ALIAS", "1", 1);
+        set_env("TRANSCRIBE_NO_GATE_UP_ALIAS", "1");
         transcribe_model_load_params mp_copy;
         transcribe_model_load_params_init(&mp_copy);
         mp_copy.backend                    = TRANSCRIBE_BACKEND_CPU;
         struct transcribe_model * copied_m = nullptr;
         const transcribe_status   st_copy  = transcribe_model_load_file(fixture.c_str(), &mp_copy, &copied_m);
-        unsetenv("TRANSCRIBE_NO_GATE_UP_ALIAS");
+        set_env("TRANSCRIBE_NO_GATE_UP_ALIAS", nullptr);
         CHECK(st_copy == TRANSCRIBE_OK);
         const auto * qm_copy = qwen_view(copied_m);
         if (qm_copy != nullptr) {
