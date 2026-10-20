@@ -78,22 +78,39 @@ MoonshineStreamingModel::~MoonshineStreamingModel() {
     plan.primary_kind = transcribe::BackendKind::Unknown;
 }
 
-// Input-length contract (see docs/input-limits.md): like moonshine, the wall
-// is on *output*, not input. The encoder takes any PCM length; the decode loop
-// stops at the decoder position cap (dec_max_position_embeddings, e.g. 4096)
-// before EOS, silently truncating. On a cap-exit we set
-// transcribe_was_truncated() and WARN (same as qwen3_asr).
+// Input-length contract (see docs/input-limits.md). Two walls:
+//
+//   - Input: the adapter adds pos_emb[frame] to every encoder frame, from a
+//     table of dec_max_position_embeddings rows (weights.cpp pins the
+//     adapter.pos_emb.weight shape to it; 4096 for every published size).
+//     That is 4096 encoder frames = 81.92 s of audio per decode, and the
+//     reference raises IndexError past it. A frame index beyond the table
+//     used to reach ggml_get_rows out of bounds: GGML_ASSERT abort on CPU,
+//     garbage reads on Metal. One-shot / batch input past it is rejected with
+//     TRANSCRIBE_ERR_INPUT_TOO_LONG; a stream stops consuming audio at the
+//     cap and reports transcribe_was_truncated() (the voxtral_realtime
+//     contract for an absolute position cap).
+//   - Output: the decode loop stops at the decoder position cap (also
+//     dec_max_position_embeddings tokens) or the duration budget before EOS;
+//     that sets transcribe_was_truncated() and WARNs.
+int adapter_max_frames(const MoonshineStreamingHParams & hp) {
+    return hp.dec_max_position_embeddings;
+}
 
-// Advisory transcribe_capabilities::max_audio_ms: the audio the output budget
-// (dec_max_position_embeddings tokens) covers at ~4 output tokens/sec. 0 means
-// unknown/unbounded. Advisory only — does not reject.
+// transcribe_capabilities::max_audio_ms: the input wall above, in ms of
+// 16 kHz audio (two stride-2 convs over frame_len-sample frames, so one
+// encoder frame is 4 * frame_len samples). Also capped by the advisory audio
+// the output budget covers at ~4 tokens/sec, which is far larger. 0 means
+// unknown.
 constexpr int k_tokens_per_sec = 4;  // rough speech-rate estimate; advisory only
 
 int64_t moonshine_streaming_max_audio_ms(const MoonshineStreamingHParams & hp) {
-    if (hp.dec_max_position_embeddings <= 0) {
+    if (hp.dec_max_position_embeddings <= 0 || hp.enc_frame_len <= 0) {
         return 0;
     }
-    return static_cast<int64_t>(hp.dec_max_position_embeddings) * 1000 / k_tokens_per_sec;
+    const int64_t output_ms = static_cast<int64_t>(hp.dec_max_position_embeddings) * 1000 / k_tokens_per_sec;
+    const int64_t input_ms  = static_cast<int64_t>(adapter_max_frames(hp)) * 4 * hp.enc_frame_len * 1000 / 16000;
+    return std::min(output_ms, input_ms);
 }
 
 bool kv_cache_init(MoonshineStreamingKvCache & cache,
@@ -554,6 +571,15 @@ transcribe_status apply_adapter_window(MoonshineStreamingSession * cc,
     const auto & hp    = cm->hparams;
     const int    enc_h = hp.enc_d_model;
     const int    dec_h = hp.dec_d_model;
+
+    // Every caller bounds its frames to the table first; this is the backstop
+    // that keeps ggml_get_rows in range no matter what (see adapter_max_frames).
+    if (static_cast<int64_t>(abs_frame_offset) + n_frames > adapter_max_frames(hp)) {
+        log_msg(TRANSCRIBE_LOG_LEVEL_ERROR,
+                "moonshine_streaming adapter: frames [%d, %d) exceed the %d-entry position table", abs_frame_offset,
+                abs_frame_offset + n_frames, adapter_max_frames(hp));
+        return TRANSCRIBE_ERR_INPUT_TOO_LONG;
+    }
 
     const int64_t t_start = ggml_time_us();
 
@@ -1166,6 +1192,16 @@ transcribe_status run_one_shot_inner(MoonshineStreamingSession *   cc,
     std::vector<float> pcm_padded       = right_pad_pcm(pcm, n_samples, hp.enc_frame_len);
     const int          n_samples_padded = static_cast<int>(pcm_padded.size());
 
+    // Reject before encoding: past the adapter's position table the model has
+    // no defined output (see adapter_max_frames).
+    if (const int T_needed = encoder_t_enc(hp, n_samples_padded); T_needed > adapter_max_frames(hp)) {
+        log_msg(TRANSCRIBE_LOG_LEVEL_ERROR,
+                "moonshine_streaming run: input too long - %d encoder frames exceed the model's %d-frame limit "
+                "(%.1f s). Shorten the audio or stream it. See transcribe_capabilities.max_audio_ms.",
+                T_needed, adapter_max_frames(hp), static_cast<double>(moonshine_streaming_max_audio_ms(hp)) / 1000.0);
+        return TRANSCRIBE_ERR_INPUT_TOO_LONG;
+    }
+
     std::vector<float> enc_host;
     int                T_enc = 0;
     if (auto st = encode_window_to_host(cc, cm, pcm_padded.data(), n_samples_padded,
@@ -1278,9 +1314,37 @@ transcribe_status decode_partial(MoonshineStreamingSession *   cc,
     if (auto st = decode_from_kv_cache(cc, cm, T_enc, params, emit_dumps, interim); st != TRANSCRIBE_OK) {
         return st;
     }
+    // decode_from_kv_cache resets the truncation flags to describe its own
+    // transcript; a stream that hit the input cap stays truncated regardless.
+    if (cc->stream_input_capped) {
+        cc->was_truncated = true;
+    }
     cc->stream_last_decoded_T = T_enc;
     cc->enc_T                 = T_enc;
     return TRANSCRIBE_OK;
+}
+
+// Once every frame the adapter can position has been emitted, the stream is
+// at the model's input cap (see adapter_max_frames): flag it truncated, warn
+// once, and release the PCM nothing will read again. Later feeds drop their
+// audio; finalize decodes what was emitted.
+void mark_stream_input_capped_if_full(MoonshineStreamingSession * cc, MoonshineStreamingModel * cm) {
+    if (cc->stream_input_capped || cc->stream_T_emitted < adapter_max_frames(cm->hparams)) {
+        return;
+    }
+    cc->stream_input_capped = true;
+    cc->was_truncated       = true;
+    transcribe::log_msg(TRANSCRIBE_LOG_LEVEL_WARN,
+                        "moonshine_streaming stream: input reached the model's %d-frame limit (%.1f s of audio); "
+                        "later audio is ignored and the transcript ends there. See "
+                        "transcribe_capabilities.max_audio_ms.",
+                        adapter_max_frames(cm->hparams),
+                        static_cast<double>(moonshine_streaming_max_audio_ms(cm->hparams)) / 1000.0);
+    // Keep stream_pcm_start_sample pointing past the dropped samples so the
+    // stream never looks empty to stream_finalize.
+    cc->stream_pcm_start_sample += static_cast<int64_t>(cc->stream_pcm_buffer.size());
+    cc->stream_pcm_buffer.clear();
+    cc->stream_pcm_buffer.shrink_to_fit();
 }
 
 std::vector<int32_t> token_ids_from_rows(const std::vector<transcribe_session::TokenEntry> & tokens) {
@@ -1414,6 +1478,7 @@ transcribe_status stream_begin(transcribe_session *             session,
     cc->stream_cross_v_committed.assign(static_cast<size_t>(hp.dec_n_layers), std::vector<float>{});
     cc->stream_T_emitted      = 0;
     cc->stream_last_decoded_T = 0;
+    cc->stream_input_capped   = false;
     cc->stream_token_id_history.clear();
     cc->stream_L_total_frames        = cumulative_left_context(hp);
     cc->stream_R_total_frames        = cumulative_right_context(hp);
@@ -1578,8 +1643,24 @@ transcribe_status stream_feed(transcribe_session *       session,
         return TRANSCRIBE_ERR_ABORTED;
     }
 
-    cc->stream_pcm_buffer.insert(cc->stream_pcm_buffer.end(), pcm, pcm + n_samples);
     cc->stream_audio_input_us += samples_to_us(n_samples);
+
+    // Past the input cap nothing more can be transcribed (see
+    // adapter_max_frames): drop the audio instead of buffering it, keep the
+    // last transcript, and report the stream as fully consumed.
+    if (cc->stream_input_capped) {
+        cc->stream_audio_committed_us = cc->stream_audio_input_us;
+        if (update != nullptr) {
+            update->result_changed     = false;
+            update->revision           = cc->stream_revision;
+            update->input_received_ms  = us_to_ms(cc->stream_audio_input_us);
+            update->audio_committed_ms = us_to_ms(cc->stream_audio_committed_us);
+            update->buffered_ms        = 0;
+        }
+        return TRANSCRIBE_OK;
+    }
+
+    cc->stream_pcm_buffer.insert(cc->stream_pcm_buffer.end(), pcm, pcm + n_samples);
 
     const int     spf              = cc->stream_samples_per_enc_frame;
     // total_pcm and available_frames are computed in ABSOLUTE frames
@@ -1589,7 +1670,7 @@ transcribe_status stream_feed(transcribe_session *       session,
     const int     R                = cc->stream_R_total_frames;
     const int     L                = cc->stream_L_total_frames;
 
-    const int stable_frames  = available_frames - R;
+    const int stable_frames  = std::min(available_frames - R, adapter_max_frames(cm->hparams));
     bool      result_changed = false;
     if (stable_frames > cc->stream_T_emitted) {
         const int emit_start = cc->stream_T_emitted;
@@ -1599,6 +1680,7 @@ transcribe_status stream_feed(transcribe_session *       session,
         if (auto st = flush_stable_frames(cc, cm, win_start, win_end, emit_start, emit_end); st != TRANSCRIBE_OK) {
             return st;
         }
+        mark_stream_input_capped_if_full(cc, cm);
         cc->stream_audio_committed_us =
             static_cast<int64_t>(cc->stream_T_emitted) * static_cast<int64_t>(spf) * 1000000LL / k_sample_rate_hz;
 
@@ -1709,15 +1791,24 @@ transcribe_status stream_finalize(transcribe_session * session, transcribe_strea
             (st == TRANSCRIBE_OK) ? 0 : us_to_ms(cc->stream_audio_input_us - cc->stream_audio_committed_us);
     };
 
-    if (T_total > cc->stream_T_emitted) {
+    // The tail can still run past the input cap when the stream ended inside
+    // the last right-context window; emit up to the cap and report the rest
+    // as truncated (see adapter_max_frames).
+    const int T_emit_end = std::min(T_total, adapter_max_frames(hp));
+    if (T_emit_end > cc->stream_T_emitted) {
         const int emit_start = cc->stream_T_emitted;
-        const int emit_end   = T_total;
+        const int emit_end   = T_emit_end;
         const int win_start  = std::max(0, emit_start - cc->stream_L_total_frames);
-        const int win_end    = emit_end;
+        // Right context: the real audio past the cap when there is any, the end
+        // of the stream otherwise - exactly what a mid-stream flush would see.
+        const int win_end    = std::min(T_total, emit_end + cc->stream_R_total_frames);
         if (auto st = flush_stable_frames(cc, cm, win_start, win_end, emit_start, emit_end); st != TRANSCRIBE_OK) {
             write_update(st);
             return st;
         }
+    }
+    if (T_total > adapter_max_frames(hp)) {
+        mark_stream_input_capped_if_full(cc, cm);
     }
 
     const int T_enc = cc->stream_T_emitted;
@@ -1747,9 +1838,9 @@ transcribe_status stream_finalize(transcribe_session * session, transcribe_strea
             write_update(st);
             return st;
         }
-    } else if (cc->was_truncated) {
+    } else if (cc->was_truncated && (cc->stopped_on_repetition || !cc->stream_input_capped)) {
         // The last feed's interim decode is the final transcript, and it only
-        // logged its stop at DEBUG.
+        // logged its stop at DEBUG. (An input-cap stop already warned once.)
         transcribe::log_msg(
             TRANSCRIBE_LOG_LEVEL_WARN,
             "moonshine_streaming stream: the final transcript %s before end-of-stream; it may be "
@@ -1798,6 +1889,7 @@ void stream_reset(transcribe_session * session) {
     }
     cc->stream_T_emitted      = 0;
     cc->stream_last_decoded_T = 0;
+    cc->stream_input_capped   = false;
     cc->stream_token_id_history.clear();
 }
 
@@ -1852,6 +1944,7 @@ transcribe_status run_batch(transcribe_session *          session,
 
     // ----- Pass 1: serial per-utterance encoder + adapter -----
     std::vector<char>               valid(n, 0);
+    std::vector<transcribe_status>  fail_status(n, TRANSCRIBE_ERR_INVALID_ARG);
     std::vector<std::vector<float>> adapter_hosts(n);
     std::vector<int>                T_enc(n, 0);
     int                             T_enc_max = 0;
@@ -1864,6 +1957,15 @@ transcribe_status run_batch(transcribe_session *          session,
             continue;
         }
         std::vector<float> pcm_padded = right_pad_pcm(pcm[b], n_samples[b], hp.enc_frame_len);
+        if (const int T_needed = encoder_t_enc(hp, static_cast<int>(pcm_padded.size()));
+            T_needed > adapter_max_frames(hp)) {
+            log_msg(TRANSCRIBE_LOG_LEVEL_ERROR,
+                    "moonshine_streaming run_batch: utterance %d input too long - %d encoder frames exceed the "
+                    "model's %d-frame limit. See transcribe_capabilities.max_audio_ms.",
+                    b, T_needed, adapter_max_frames(hp));
+            fail_status[b] = TRANSCRIBE_ERR_INPUT_TOO_LONG;
+            continue;
+        }
         std::vector<float> enc_host;
         int                t_enc_b = 0;
         if (encode_window_to_host(cc, cm, pcm_padded.data(), static_cast<int>(pcm_padded.size()),
@@ -1885,7 +1987,7 @@ transcribe_status run_batch(transcribe_session *          session,
     if (T_enc_max <= 0) {
         for (int b = 0; b < n; ++b) {
             transcribe_session::ResultSet rs;
-            rs.status = TRANSCRIBE_ERR_INVALID_ARG;
+            rs.status = fail_status[b];
             cc->batch_results.push_back(std::move(rs));
         }
         return TRANSCRIBE_OK;
@@ -2152,7 +2254,7 @@ transcribe_status run_batch(transcribe_session *          session,
     for (int b = 0; b < n; ++b) {
         transcribe_session::ResultSet rs;
         if (!valid[b]) {
-            rs.status = TRANSCRIBE_ERR_INVALID_ARG;
+            rs.status = fail_status[b];
             cc->batch_results.push_back(std::move(rs));
             continue;
         }
