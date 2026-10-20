@@ -876,12 +876,16 @@ bool gate_up_is_adjacent(const GateUpEntry & e, size_t fused_bytes) {
     }
 
     // A device may keep several views of one buffer (Metal splits a mapping
-    // larger than max_buffer_size into overlapping views) and a tensor has to
-    // sit inside a single one. The generic API does not expose view bounds, so
-    // only alias a buffer that the device holds as one view.
+    // larger than its max buffer size into overlapping views, after rounding the
+    // length up to the page size) and a tensor has to sit inside a single one.
+    // The generic API does not expose view bounds, so only alias a buffer the
+    // device can hold as one view. Splitting rather than aliasing costs a copy;
+    // aliasing across a boundary would hand the kernel the wrong buffer, so the
+    // margin is deliberately generous.
+    constexpr size_t           k_max_page_size = 16384;  // largest page size we target
     ggml_backend_buffer_type_t buft            = ggml_backend_buffer_get_type(buffer);
     const size_t               max_buffer_size = ggml_backend_buft_get_max_size(buft);
-    if (max_buffer_size != 0 && ggml_backend_buffer_get_size(buffer) > max_buffer_size) {
+    if (max_buffer_size != 0 && ggml_backend_buffer_get_size(buffer) + k_max_page_size > max_buffer_size) {
         return false;
     }
 
