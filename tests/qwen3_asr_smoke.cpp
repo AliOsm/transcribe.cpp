@@ -107,6 +107,10 @@ const transcribe::qwen3_asr::QwenAsrModel * qwen_view(const struct transcribe_mo
 }  // namespace
 
 int main() {
+    // The gate+up assertions below describe the default configuration; a caller
+    // that exported the fork switch would otherwise fail them spuriously.
+    unsetenv("TRANSCRIBE_NO_GATE_UP_ALIAS");
+
     const std::string fixture = g_fixtures_dir + "/arch_qwen3_asr_minimal.gguf";
 
     if (!file_exists(fixture)) {

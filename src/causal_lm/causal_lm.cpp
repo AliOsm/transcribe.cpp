@@ -866,6 +866,11 @@ bool gate_up_is_adjacent(const GateUpEntry & e, size_t fused_bytes) {
     if (!ggml_is_contiguous(e.gate_w) || !ggml_is_contiguous(e.up_w)) {
         return false;
     }
+    // The fused tensor is exactly gate's bytes then up's, so the two have to add
+    // up to it: proves both shapes match what the fused shape implies.
+    if (fused_bytes != ggml_nbytes(e.gate_w) + ggml_nbytes(e.up_w)) {
+        return false;
+    }
     if (static_cast<const char *>(e.gate_w->data) + ggml_nbytes(e.gate_w) != e.up_w->data) {
         return false;
     }
