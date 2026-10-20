@@ -350,6 +350,23 @@ add_test(NAME transcribe_conv_pw_promote_unit
     COMMAND transcribe_conv_pw_promote_unit)
 
 # -----------------------------------------------------------------------------
+# causal_lm::pack_gate_up: alias / copy / mismatch, no model needed
+# -----------------------------------------------------------------------------
+
+add_executable(transcribe_pack_gate_up_unit
+    pack_gate_up_unit.cpp)
+
+target_link_libraries(transcribe_pack_gate_up_unit PRIVATE transcribe ggml)
+
+target_include_directories(transcribe_pack_gate_up_unit PRIVATE
+    ${CMAKE_SOURCE_DIR}/src)
+
+transcribe_apply_warnings(transcribe_pack_gate_up_unit)
+
+add_test(NAME transcribe_pack_gate_up_unit
+    COMMAND transcribe_pack_gate_up_unit)
+
+# -----------------------------------------------------------------------------
 # Dispatcher-level transcribe_run behavior
 # -----------------------------------------------------------------------------
 
