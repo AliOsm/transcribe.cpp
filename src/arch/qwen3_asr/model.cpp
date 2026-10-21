@@ -290,7 +290,12 @@ transcribe_status init_context(transcribe_model *                model,
     cc->kv_type   = params->kv_type;
     cc->n_ctx     = transcribe_session_params_n_ctx(params);
 
-    cc->encoder_use_flash = false;
+    // Encoder flash is what keeps long audio bounded: without it every block
+    // materialises [T_enc, T_enc, n_heads] f32 scores (~0.9 GB at 5 minutes,
+    // ~13.6 GB at 20). Measured on M4 Metal at 306 s it is also faster
+    // (encode 2843 -> 2120 ms) with an identical transcript; CPU is neutral.
+    // TRANSCRIBE_NO_FLASH still turns it off.
+    cc->encoder_use_flash = true;
     cc->decoder_use_flash = true;
     transcribe::flash::apply_env_overrides(cc->encoder_use_flash, cc->decoder_use_flash);
 
@@ -693,19 +698,8 @@ transcribe_status run(transcribe_session *          session,
         ggml_backend_tensor_set(eb.pos_emb_in, pe.data(), 0, pe.size() * sizeof(float));
     }
 
-    // Attention mask (block-diagonal from cu_seqlens).
-    {
-        std::vector<float> mask = build_cu_seqlens_mask(timing, cm->hparams);
-        if (cc->encoder_use_flash) {
-            std::vector<ggml_fp16_t> mask_f16(mask.size());
-            for (size_t i = 0; i < mask.size(); ++i) {
-                mask_f16[i] = ggml_fp32_to_fp16(mask[i]);
-            }
-            ggml_backend_tensor_set(eb.mask_in, mask_f16.data(), 0, mask_f16.size() * sizeof(ggml_fp16_t));
-        } else {
-            ggml_backend_tensor_set(eb.mask_in, mask.data(), 0, mask.size() * sizeof(float));
-        }
-    }
+    // No attention mask: the encoder attends unmasked over the whole
+    // utterance (see build_cu_seqlens_mask), so there is nothing to upload.
 
     transcribe::configure_sched_n_threads(cc->sched, cc->n_threads);
 
