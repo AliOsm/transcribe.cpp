@@ -6,7 +6,7 @@
 // .Qwen3ASRAudioEncoder.
 //
 // Attention: we match the reference's eager full-bidirectional attention over
-// the pad-trimmed sequence (see build_cu_seqlens_mask), not vLLM's
+// the pad-trimmed sequence (full, unmasked attention), not vLLM's
 // cu_seqlens chunking.
 //
 // Shape conventions (ggml fast-to-slow ne[]):
@@ -23,8 +23,13 @@
 //                 The last chunk's aftercnn trailing pad rows are dropped
 //                 in the graph (matches reference's
 //                 `padded_embed[padded_mask_after_cnn]` selection).
-//   attn mask   : [T_enc, T_enc] additive. All zeros — full
-//                 bidirectional attention over the valid aftercnn rows.
+//   attn mask   : none. The single-shot encoder attends unmasked over the
+//                 whole (pad-trimmed) sequence, which is what an all-zero
+//                 [T_enc, T_enc] additive mask means, so the graph passes
+//                 mask=nullptr rather than materialising a T^2 buffer.
+//                 (The reference's measured eager path ignores cu_seqlens and
+//                 runs plain bidirectional attention over the valid aftercnn
+//                 rows; vLLM's flash-attn-2 windowing scores worse WER.)
 //   output      : [output_dim, T_enc]
 
 #pragma once
@@ -67,7 +72,6 @@ std::vector<float> build_sinusoid_pe(int32_t d_model, int32_t length, double max
 // Additive attention bias [T_enc, T_enc]. All zeros — full bidirectional
 // attention over the pad-trimmed sequence (the eager baseline, not vLLM's
 // cu_seqlens block-diagonal pattern).
-std::vector<float> build_cu_seqlens_mask(const EncoderTiming & t, const QwenAsrHParams & hp);
 
 struct EncoderDumps {
     ggml_tensor * mel_in         = nullptr;  // graph input
@@ -82,7 +86,7 @@ struct EncoderDumps {
 struct EncoderBuild {
     ggml_tensor * mel_in     = nullptr;  // [mel_per_chunk, n_mels, 1, n_chunks]
     ggml_tensor * pos_emb_in = nullptr;  // [d_model, per_chunk_aftercnn]
-    ggml_tensor * mask_in    = nullptr;  // [T_enc, T_enc]
+    ggml_tensor * mask_in    = nullptr;  // always null: full attention
     ggml_tensor * out        = nullptr;  // [output_dim, T_enc]
     EncoderDumps  dumps{};
     ggml_cgraph * graph = nullptr;

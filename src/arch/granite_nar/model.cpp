@@ -537,7 +537,12 @@ transcribe_status run(transcribe_session *          ctx_base,
             window_ids.resize(off + static_cast<size_t>(ids->ne[0]));
             ggml_backend_tensor_get(ids, window_ids.data() + off, 0, static_cast<size_t>(ids->ne[0]) * sizeof(int32_t));
         }
-        collapse_bpe_window_ids(window_ids, window_mass, /*blank_id=*/cm->hparams.enc_bpe_blank_id, hyp_ids);
+        if (!collapse_bpe_window_ids(window_ids, window_mass, /*blank_id=*/cm->hparams.enc_bpe_blank_id, hyp_ids)) {
+            transcribe::log_msg(TRANSCRIBE_LOG_LEVEL_ERROR,
+                                "granite_nar run: BPE head emitted %zu window ids but %zu window masses",
+                                window_ids.size(), window_mass.size());
+            return TRANSCRIBE_ERR_BACKEND;
+        }
     }
     if (hyp_ids.empty()) {
         // No tokens — emit empty transcript and return.

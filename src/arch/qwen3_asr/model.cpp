@@ -699,7 +699,8 @@ transcribe_status run(transcribe_session *          session,
     }
 
     // No attention mask: the encoder attends unmasked over the whole
-    // utterance (see build_cu_seqlens_mask), so there is nothing to upload.
+    // utterance (an all-zero additive mask is the same thing), so there is
+    // nothing to upload.
 
     transcribe::configure_sched_n_threads(cc->sched, cc->n_threads);
 

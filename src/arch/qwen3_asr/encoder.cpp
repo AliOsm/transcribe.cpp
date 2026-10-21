@@ -71,28 +71,6 @@ std::vector<float> build_sinusoid_pe(int32_t d_model, int32_t length, double max
     return pe;
 }
 
-// The single-shot graph no longer takes this mask: it is all zeros, which
-// is exactly soft_max_ext / flash_attn_ext with a null mask, and as a dense
-// [T_enc, T_enc] input it was a T^2 host + device buffer (~1 GB each at
-// 20 minutes). Kept as the documented statement of the attention pattern.
-std::vector<float> build_cu_seqlens_mask(const EncoderTiming & t, const QwenAsrHParams & hp) {
-    (void) hp;
-    const int32_t T = t.T_enc;
-    // Full attention over the valid aftercnn rows. The measured
-    // upstream reference (qwen_asr 0.0.6 + transformers eager / sdpa)
-    // ignores cu_seqlens and runs unmasked bidirectional attention over
-    // the post-pad-select tensor. vLLM's flash-attn-2 path honors
-    // cu_seqlens and chunks at window_aftercnn, but its LibriSpeech WER
-    // is worse than the eager path in our measurements; we follow the
-    // eager reference so that transcribe.cpp's greedy decode matches
-    // the per-tensor dumps byte-for-byte after the pad-row trim in
-    // build_enc_graph.
-    //
-    // Zero-filled mask = softmax(scale * QK) with no bias, which is
-    // identical to soft_max_ext(nullptr) and matches eager semantics.
-    return std::vector<float>(static_cast<size_t>(T) * T, 0.0f);
-}
-
 // Graph construction
 
 namespace {
@@ -347,7 +325,7 @@ EncoderBuild build_encoder_graph(ggml_context *         ctx,
     named(eb.pos_emb_in, "enc.pos_emb.in");
     ggml_set_input(eb.pos_emb_in);
 
-    // No attention mask: full unmasked attention (see build_cu_seqlens_mask).
+    // No attention mask: full unmasked attention (see encoder.h).
     eb.mask_in = nullptr;
 
     // ----- Subsample: 3x Conv2d + GELU + conv_out linear, per chunk group -----

@@ -108,7 +108,10 @@ constexpr int kBpeTileWindows = 256;
 // Greedy collapse of the in-graph pooled BPE head: one argmax id per pool
 // window and the window's total importance. Windows whose importance sum is
 // <= 1e-9 emit blank, exactly as compute_bpe_ctc_initial_hypothesis does.
-void collapse_bpe_window_ids(const std::vector<int32_t> & window_ids,
+// Returns false (and leaves out_token_ids empty) if the two vectors disagree
+// in length, which can only be a graph/caller bug: the tiles cover every
+// window and both are read from tensors sized eb.n_bpe_windows.
+bool collapse_bpe_window_ids(const std::vector<int32_t> & window_ids,
                              const std::vector<float> &   window_mass,
                              int                          blank_id,
                              std::vector<int32_t> &       out_token_ids);

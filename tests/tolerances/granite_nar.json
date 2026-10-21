@@ -54,7 +54,7 @@
     "argmax index directly. The older 7d20732d snapshot used bpe_output_dim",
     "= vocab_size + 1 with blank at channel 0 and `argmax - 1` shift. The",
     "converter writes the actual blank_token_id as a new KV so C++ honors",
-    "the right scheme — see encoder.cpp::compute_bpe_ctc_initial_hypothesis.",
+    "the right scheme — see collapse_bpe_window_ids in encoder.cpp.",
     "",
     "All numbers measured with `validate.py all --family granite_nar --variant",
     "granite-speech-4.1-2b-nar`. Recipe: max(1.5x observed, 1e-6)."

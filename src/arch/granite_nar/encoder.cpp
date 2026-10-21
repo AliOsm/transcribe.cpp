@@ -527,12 +527,15 @@ EncoderBuild build_encoder_graph(ggml_context *            ctx,
 
 // Collapse for the in-graph pooled BPE head.
 
-void collapse_bpe_window_ids(const std::vector<int32_t> & window_ids,
+bool collapse_bpe_window_ids(const std::vector<int32_t> & window_ids,
                              const std::vector<float> &   window_mass,
                              int                          blank_id,
                              std::vector<int32_t> &       out_token_ids) {
     out_token_ids.clear();
-    const size_t n_windows = std::min(window_ids.size(), window_mass.size());
+    if (window_ids.size() != window_mass.size()) {
+        return false;
+    }
+    const size_t n_windows = window_ids.size();
     out_token_ids.reserve(n_windows);
     // Same greedy + collapse-repeats + drop-blanks as
     // compute_bpe_ctc_initial_hypothesis, including the all-blank-window rule
@@ -546,6 +549,7 @@ void collapse_bpe_window_ids(const std::vector<int32_t> & window_ids,
         }
         prev = id;
     }
+    return true;
 }
 
 // Host-side BPE CTC pool + greedy decode (reference formulation).
