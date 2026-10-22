@@ -7,10 +7,8 @@
 #include "transcribe-backend.h"
 
 #include "ggml.h"
-#include "transcribe-env.h"
 #include "transcribe-log.h"
 
-#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -203,47 +201,6 @@ void log_sched_scratch(ggml_backend_sched_t sched, const char * tag, int line, l
     }
 }
 
-// TRANSCRIBE_GRAPH_TOP=N: log the N largest nodes of every graph allocated
-// through alloc_sched_graph, with op, type, shape and assigned backend. The
-// scratch line above says how big a graph is; this says which tensors make it
-// that big. Sizes are per tensor, not the live set, so a tensor that is freed
-// before the next big one is allocated still shows up. Debugging aid only.
-void log_graph_top(ggml_backend_sched_t sched, struct ggml_cgraph * graph, const char * tag, int line) {
-    const char * env_n = env::str("TRANSCRIBE_GRAPH_TOP");
-    if (env_n == nullptr) {
-        return;
-    }
-    const int top_n = std::atoi(env_n);
-    if (top_n <= 0) {
-        return;
-    }
-    std::vector<ggml_tensor *> nodes;
-    const int                  n_nodes = ggml_graph_n_nodes(graph);
-    nodes.reserve(static_cast<size_t>(n_nodes));
-    size_t total = 0;
-    for (int i = 0; i < n_nodes; ++i) {
-        ggml_tensor * t = ggml_graph_node(graph, i);
-        if (t->view_src != nullptr) {
-            continue;  // views own no memory
-        }
-        total += ggml_nbytes(t);
-        nodes.push_back(t);
-    }
-    const size_t keep = std::min(nodes.size(), static_cast<size_t>(top_n));
-    std::partial_sort(nodes.begin(), nodes.begin() + static_cast<std::ptrdiff_t>(keep), nodes.end(),
-                      [](const ggml_tensor * a, const ggml_tensor * b) { return ggml_nbytes(a) > ggml_nbytes(b); });
-    log_msg(TRANSCRIBE_LOG_LEVEL_DEBUG, "%s@%d: graph top %zu of %d nodes (%.1f MB if nothing were reused)", tag, line,
-            keep, n_nodes, static_cast<double>(total) / 1e6);
-    for (size_t i = 0; i < keep; ++i) {
-        const ggml_tensor * t       = nodes[i];
-        ggml_backend_t      backend = ggml_backend_sched_get_tensor_backend(sched, const_cast<ggml_tensor *>(t));
-        log_msg(TRANSCRIBE_LOG_LEVEL_DEBUG, "  %9.1f MB  %-14s %-5s [%lld, %lld, %lld, %lld] %s %s",
-                static_cast<double>(ggml_nbytes(t)) / 1e6, ggml_op_desc(t), ggml_type_name(t->type),
-                static_cast<long long>(t->ne[0]), static_cast<long long>(t->ne[1]), static_cast<long long>(t->ne[2]),
-                static_cast<long long>(t->ne[3]), backend != nullptr ? ggml_backend_name(backend) : "-", t->name);
-    }
-}
-
 }  // namespace
 
 void safe_backend_free(ggml_backend_t backend) noexcept {
@@ -287,7 +244,6 @@ bool alloc_sched_graph(ggml_backend_sched_t sched,
         return false;
     }
     log_sched_scratch(sched, tag, line, extent);
-    log_graph_top(sched, graph, tag, line);
     return true;
 }
 

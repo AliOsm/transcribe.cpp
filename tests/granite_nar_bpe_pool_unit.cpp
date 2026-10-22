@@ -72,14 +72,14 @@ struct Head {
 // One scenario: `hidden` is [T, dim] row-major (frame-major), importance is
 // [T]. Runs the reference (frame-level logits, then pool + collapse) and the
 // graph's shape (pool hidden, then head + argmax + collapse) and compares.
-void check_equivalence(const char * what,
-                       const Head & head,
+void check_equivalence(const char *               what,
+                       const Head &               head,
                        const std::vector<float> & hidden,
                        const std::vector<float> & importance,
                        int                        pool_window,
                        int                        blank_id) {
-    const int T      = static_cast<int>(importance.size());
-    const int n_win  = (T + pool_window - 1) / pool_window;
+    const int T     = static_cast<int>(importance.size());
+    const int n_win = (T + pool_window - 1) / pool_window;
 
     // --- Reference: frame-level logits, host pool + greedy (encoder.cpp) ---
     std::vector<float> frame_logits;
@@ -89,9 +89,9 @@ void check_equivalence(const char * what,
                                                                 blank_id, ref_ids);
 
     // --- Graph shape: importance-weighted hidden pool, then head + argmax ---
-    std::vector<float>         pooled(static_cast<size_t>(n_win) * head.dim, 0.0f);
-    std::vector<float>         mass(static_cast<size_t>(n_win), 0.0f);
-    std::vector<int32_t>       window_ids(static_cast<size_t>(n_win), blank_id);
+    std::vector<float>   pooled(static_cast<size_t>(n_win) * head.dim, 0.0f);
+    std::vector<float>   mass(static_cast<size_t>(n_win), 0.0f);
+    std::vector<int32_t> window_ids(static_cast<size_t>(n_win), blank_id);
     for (int w = 0; w < n_win; ++w) {
         const int t0 = w * pool_window;
         const int t1 = std::min(t0 + pool_window, T);
@@ -105,8 +105,7 @@ void check_equivalence(const char * what,
         for (int t = t0; t < t1; ++t) {
             const float wt = importance[static_cast<size_t>(t)] / denom;
             for (int i = 0; i < head.dim; ++i) {
-                pooled[static_cast<size_t>(w) * head.dim + i] +=
-                    wt * hidden[static_cast<size_t>(t) * head.dim + i];
+                pooled[static_cast<size_t>(w) * head.dim + i] += wt * hidden[static_cast<size_t>(t) * head.dim + i];
             }
         }
     }
@@ -159,8 +158,8 @@ int main() {
     Head head(/*dim=*/4, /*vocab=*/16);
 
     // T = 10, P = 4 -> 3 windows, the last one partial (2 frames).
-    const int          T  = 10;
-    const int          P  = 4;
+    const int          T = 10;
+    const int          P = 4;
     std::vector<float> hidden(static_cast<size_t>(T) * head.dim);
     for (int t = 0; t < T; ++t) {
         for (int i = 0; i < head.dim; ++i) {
@@ -190,22 +189,22 @@ int main() {
 
     // Collapse rules: adjacent duplicate windows collapse, blanks are dropped.
     {
-        const std::vector<int32_t> ids  = {3, 3, 0, 7, 0, 0, 7};
-        const std::vector<float>   mass = {1, 1, 1, 1, 1, 1, 1};
+        const std::vector<int32_t> ids  = { 3, 3, 0, 7, 0, 0, 7 };
+        const std::vector<float>   mass = { 1, 1, 1, 1, 1, 1, 1 };
         std::vector<int32_t>       out;
         CHECK(transcribe::granite_nar::collapse_bpe_window_ids(ids, mass, /*blank_id=*/0, out));
         // Collapse runs on the window ids (before the shift): 3,3 -> one 3;
         // 0 is blank; 7 survives both times because a blank resets "prev".
         // Scheme A then subtracts 1 from each emitted id.
-        const std::vector<int32_t> expect = {2, 6, 6};
+        const std::vector<int32_t> expect = { 2, 6, 6 };
         CHECK(out == expect);
     }
 
     // A length mismatch is a caller bug: refuse instead of truncating.
     {
-        const std::vector<int32_t> ids  = {1, 2, 3};
-        const std::vector<float>   mass = {1, 1};
-        std::vector<int32_t>       out  = {42};
+        const std::vector<int32_t> ids  = { 1, 2, 3 };
+        const std::vector<float>   mass = { 1, 1 };
+        std::vector<int32_t>       out  = { 42 };
         CHECK(!transcribe::granite_nar::collapse_bpe_window_ids(ids, mass, /*blank_id=*/0, out));
         CHECK(out.empty());
     }

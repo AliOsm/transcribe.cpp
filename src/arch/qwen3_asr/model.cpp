@@ -563,23 +563,9 @@ void pack_mel_chunks(const float *         mel,  // [n_mels, T_mel]
     }
 }
 
-// TRANSCRIBE_QWEN3_ASR_CONV_PASS=<chunks> overrides kConvPassChunks, so the
-// multi-pass path can be exercised (and checked against one pass) on short
-// clips. Values below 1 are ignored.
-int conv_pass_chunks() {
-    if (const char * v = transcribe::env::str("TRANSCRIBE_QWEN3_ASR_CONV_PASS"); v != nullptr) {
-        char *     end = nullptr;
-        const long n   = std::strtol(v, &end, 10);
-        if (end != v && n >= 1 && n <= (1 << 20)) {
-            return static_cast<int>(n);
-        }
-    }
-    return kConvPassChunks;
-}
-
 // Conv subsampler over `n_chunks` packed mel chunks (pack_mel_chunks layout)
 // into out = [d_model, per_chunk_aftercnn, n_chunks], in passes of
-// conv_pass_chunks() chunks. Full passes share one graph, allocated once and
+// kConvPassChunks chunks. Full passes share one graph, allocated once and
 // re-run; the remainder gets one graph of its own size. Neither node count
 // nor scratch grows with the audio, and chunks are independent, so the
 // result matches one graph over every chunk. Built in cc->compute_ctx;
@@ -619,10 +605,9 @@ transcribe_status run_subsample(QwenAsrSession *     cc,
         return TRANSCRIBE_OK;
     };
 
-    const int pass   = conv_pass_chunks();
-    const int n_full = n_chunks - n_chunks % pass;
+    const int n_full = n_chunks - n_chunks % kConvPassChunks;
     if (n_full > 0) {
-        if (const transcribe_status st = run_passes(pass, 0, n_full); st != TRANSCRIBE_OK) {
+        if (const transcribe_status st = run_passes(kConvPassChunks, 0, n_full); st != TRANSCRIBE_OK) {
             return st;
         }
     }
@@ -795,10 +780,6 @@ transcribe_status run(transcribe_session *          session,
         std::vector<float> pe = build_sinusoid_pe(cm->hparams.enc_d_model, timing.per_chunk_aftercnn);
         ggml_backend_tensor_set(eb.pos_emb_in, pe.data(), 0, pe.size() * sizeof(float));
     }
-
-    // No attention mask: the encoder attends unmasked over the whole
-    // utterance (an all-zero additive mask is the same thing), so there is
-    // nothing to upload.
 
     transcribe::configure_sched_n_threads(cc->sched, cc->n_threads);
 
@@ -1708,8 +1689,8 @@ transcribe_status run_batch(transcribe_session *          session,
     // real max prompt length before allocating it.
     std::vector<std::vector<float>> enc_hosts(n);
     std::vector<int>                T_enc(n, 0);
-    const int T_enc_cap = ceiling - k_gen_reserve - prompt_tokens_without_system(0, lang_prefix_ptr);
-    const int64_t                   t_encpass0 = ggml_time_us();
+    const int     T_enc_cap  = ceiling - k_gen_reserve - prompt_tokens_without_system(0, lang_prefix_ptr);
+    const int64_t t_encpass0 = ggml_time_us();
     if (const transcribe_status st = encode_all_batched(cc, cm, pcm, n_samples, n, T_enc_cap, valid, fail_status,
                                                         enc_hosts, T_enc, mel_us, enc_us);
         st != TRANSCRIBE_OK) {

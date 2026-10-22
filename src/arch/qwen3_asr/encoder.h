@@ -75,10 +75,6 @@ EncoderTiming compute_encoder_timing(int32_t n_mel_frames, const QwenAsrHParams 
 // sin(p * inv_ts[k]), the second d_model/2 are cos(p * inv_ts[k]).
 std::vector<float> build_sinusoid_pe(int32_t d_model, int32_t length, double max_timescale = 10000.0);
 
-// Additive attention bias [T_enc, T_enc]. All zeros — full bidirectional
-// attention over the pad-trimmed sequence (the eager baseline, not vLLM's
-// cu_seqlens block-diagonal pattern).
-
 // Conv chunks per group inside a subsample graph. The 3x Conv2d frontend is
 // independent per n_window*2-mel chunk, but its activations are large:
 // conv0's output is [50, 64, 480] f32 (6.1 MB) per chunk and conv1's im2col
@@ -123,8 +119,7 @@ struct EncoderDumps {
 struct EncoderBuild {
     ggml_tensor * subsample_in = nullptr;  // [d_model, per_chunk_aftercnn, n_chunks]
     ggml_tensor * pos_emb_in   = nullptr;  // [d_model, per_chunk_aftercnn]
-    ggml_tensor * mask_in      = nullptr;  // unused (null): full unmasked attention
-    ggml_tensor * out        = nullptr;  // [output_dim, T_enc]
+    ggml_tensor * out          = nullptr;  // [output_dim, T_enc]
     EncoderDumps  dumps{};
     ggml_cgraph * graph = nullptr;
     EncoderTiming timing{};

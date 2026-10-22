@@ -18,7 +18,7 @@
 
 namespace transcribe::qwen3_asr {
 
-// Timing / cu_seqlens
+// Timing
 
 int32_t aftercnn_len(int32_t mel_len) {
     // Three rounds of Conv2d(stride=2, pad=1, kernel=3):
@@ -344,9 +344,6 @@ EncoderBuild build_encoder_graph(ggml_context *         ctx,
     named(eb.pos_emb_in, "enc.pos_emb.in");
     ggml_set_input(eb.pos_emb_in);
 
-    // No attention mask: full unmasked attention (see encoder.h).
-    eb.mask_in = nullptr;
-
     // Add sinusoidal PE (broadcast across n_chunks). pos_emb_in has
     // ne=[d_model, T_per_chunk]; ggml_add broadcasts missing axes.
     ggml_tensor * x = ggml_add(ctx, eb.subsample_in, eb.pos_emb_in);
@@ -385,7 +382,7 @@ EncoderBuild build_encoder_graph(ggml_context *         ctx,
     eb.dumps.pos_add_out = x;
     transcribe::debug::mark_tensor_for_dump(x);
 
-    // ----- 18 encoder blocks -----
+    // ----- 18 encoder blocks (unmasked full attention, see encoder.h) -----
     const int n_layers = static_cast<int>(weights.enc_blocks.size());
     for (int i = 0; i < n_layers; ++i) {
         x = build_enc_block(ctx, x, /*mask=*/nullptr, weights.enc_blocks[i], static_cast<int>(d_model),

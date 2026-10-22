@@ -112,9 +112,6 @@ void release_compute_scratch(ggml_backend_sched_t & sched, struct ggml_context *
 // buffer's high-water mark, so per-token step reallocations stay silent.
 // `tag`/`line` identify the call site; `extent` (>= 0) is an optional
 // graph-length field to log alongside it (e.g. the encoder frame count).
-//
-// TRANSCRIBE_GRAPH_TOP=N additionally logs the N largest nodes of each graph
-// (op, type, shape, backend, name), to attribute the scratch to tensors.
 bool alloc_sched_graph(ggml_backend_sched_t sched,
                        struct ggml_cgraph * graph,
                        const char *         tag,
